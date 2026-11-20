@@ -19,9 +19,8 @@ type ToolUseEvent struct {
 }
 
 type ReasoningContentEvent struct {
-	Text            string `json:"text,omitempty"`
-	Signature       string `json:"signature,omitempty"`
-	RedactedContent string `json:"redactedContent,omitempty"`
+	Text      string `json:"text,omitempty"`
+	Signature string `json:"signature,omitempty"`
 }
 
 type ContextUsageEvent struct {

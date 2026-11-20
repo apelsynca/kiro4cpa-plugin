@@ -28,7 +28,7 @@ func (c *responseCollector) add(ev Event) {
 			c.signature = ev.Reasoning.Signature
 		}
 	case ev.ToolUse != nil:
-		_, c.streamErr = c.tools.add(*ev.ToolUse)
+		c.streamErr = c.tools.add(*ev.ToolUse)
 	}
 }
 

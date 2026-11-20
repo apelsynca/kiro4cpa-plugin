@@ -141,10 +141,7 @@ func TestAuthFileNameFallsBackToStateWithoutIdentity(t *testing.T) {
 }
 
 func TestRepeatedPollReusesResolvedIdentity(t *testing.T) {
-	session, err := createLoginSession(time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := createLoginSession(time.Minute)
 	social := &Credential{AuthMethod: AuthMethodSocial, AuthRegion: "us-east-1", RefreshToken: "rt-once"}
 	completeLoginSession(session.State, social, "done")
 

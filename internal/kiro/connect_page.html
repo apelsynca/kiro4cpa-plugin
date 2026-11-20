@@ -246,7 +246,7 @@
     }
     var autoKey = savedKey();
     var polling = null, countdown = null, inFlight = false, finished = false;
-    var authBlocked = false, credentialReady = false, failures = 0, activeMethod = '';
+    var authBlocked = false, credentialReady = false, failures = 0;
     if (!autoKey) $('key-box').style.display = 'block';
     function currentKey() { return autoKey || $('mgmt-key').value.trim(); }
     function show(kind, text) { $('msg').className = 'msg ' + kind; $('msg').textContent = text; }
@@ -265,7 +265,6 @@
       stopPolling(); stopCountdown(); lockMethods(true);
       document.querySelectorAll('.pane button').forEach(function (b) { b.disabled = true; });
       $('btn-resume').classList.add('hidden');
-      $('btn-restart').classList.remove('hidden');
       message = message || 'Sign-in failed';
       show('err', message + (/[.!?]$/.test(message) ? '' : '.') + ' Return to the panel to start a new Kiro sign-in session.');
     }
@@ -298,7 +297,7 @@
         var denied = new Error(res.status === 401 ? 'Invalid management key. Enter it again and verify.' : 'Access denied. Check the key or wait for the server to lift the access restriction.');
         denied.auth = true; throw denied;
       }
-      var data = {};
+      var data;
       try { data = await res.json(); } catch (e) { throw new Error(unexpectedResponse); }
       if (!res.ok) { var error = new Error(data.error || 'Request failed (HTTP ' + res.status + ')'); error.expired = res.status === 404; throw error; }
       return data;
@@ -306,13 +305,12 @@
     function reportError(e) {
       if (e.expired) { fail(e.message); return; }
       show('err', e.message || 'Network request failed. Please retry.');
-      if (!e.auth) { $('btn-resume').classList.remove('hidden'); $('btn-restart').classList.remove('hidden'); }
+      if (!e.auth) $('btn-resume').classList.remove('hidden');
     }
     function done(data) {
       finished = true; stopPolling(); stopCountdown(); lockMethods(true);
       document.querySelectorAll('.pane button').forEach(function (b) { b.disabled = true; });
       $('btn-resume').classList.add('hidden');
-      $('btn-restart').classList.remove('hidden');
       $('countdown').textContent = '';
       var message = 'Credentials saved. Return to the panel to view the account.';
       if (data.validation === 'valid') message = 'Credentials verified. ' + message;
@@ -338,7 +336,7 @@
         return;
       }
       if (data.status === 'error') { fail(data.error); return; }
-      activeMethod = data.method || '';
+      var activeMethod = data.method || '';
       var pane = activeMethod.indexOf('device-') === 0 ? activeMethod.slice(7) : activeMethod.indexOf('import-') === 0 ? 'import' : activeMethod;
       if (pane) selectPane(pane);
       lockMethods(Boolean(pane));
@@ -361,7 +359,7 @@
     }
     async function refreshStatus() {
       var data = await api('GET', 'status?state=' + encodeURIComponent(state));
-      await restore(data); return data;
+      await restore(data);
     }
     function startPolling() {
       if (polling !== null || finished || authBlocked) return;

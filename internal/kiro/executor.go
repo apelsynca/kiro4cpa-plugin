@@ -42,7 +42,7 @@ func prepareExecution(request []byte) (executorRPC, Credential, convertedRequest
 	if err != nil {
 		return req, cred, convertedRequest{}, wire.ErrorStatus("invalid_credential", err.Error(), http.StatusUnauthorized, false), nil
 	}
-	conv, err := convertClaudeRequest(req.Payload, cred)
+	conv, err := convertClaudeRequest(req.Payload)
 	if err != nil {
 		return req, cred, conv, wire.ErrorStatus("invalid_request", err.Error(), http.StatusBadRequest, false), nil
 	}

@@ -6,10 +6,7 @@ import (
 )
 
 func TestLoginSessionLifecycle(t *testing.T) {
-	session, err := createLoginSession(100 * time.Millisecond)
-	if err != nil {
-		t.Fatalf("createLoginSession failed: %v", err)
-	}
+	session := createLoginSession(time.Minute)
 	if len(session.State) < 16 {
 		t.Fatalf("session state too short: %q", session.State)
 	}
@@ -20,18 +17,22 @@ func TestLoginSessionLifecycle(t *testing.T) {
 	}
 
 	cred := &Credential{AuthMethod: "api_key", KiroAPIKey: "test-key"}
-	if !completeLoginSession(session.State, cred, "connected") {
-		t.Fatalf("completeLoginSession failed")
-	}
+	completeLoginSession(session.State, cred, "connected")
 
 	got, _ = getLoginSession(session.State)
 	if got.Completed == nil || got.Completed.KiroAPIKey != "test-key" {
 		t.Fatalf("expected completed credential to match")
 	}
 
-	time.Sleep(120 * time.Millisecond)
-	cleanupLoginSessions(time.Now().UTC())
+	updateLoginSession(session.State, func(s *LoginSession) { s.ExpiresAt = time.Now().Add(-time.Minute) })
 	if _, ok := getLoginSession(session.State); ok {
-		t.Fatalf("expected session to be pruned after expiration")
+		t.Fatal("expected expired session to be unavailable")
+	}
+	createLoginSession(time.Minute)
+	loginSessionsMu.RLock()
+	_, present := loginSessions[session.State]
+	loginSessionsMu.RUnlock()
+	if present {
+		t.Fatal("creating a session did not prune the expired session")
 	}
 }

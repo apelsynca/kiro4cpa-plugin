@@ -46,7 +46,7 @@ var (
 	errStaleCredential = errors.New("kiro credential snapshot is too old; reload the current credential or sign in again")
 )
 
-func keyOf(_ string, c Credential) refreshKey {
+func keyOf(c Credential) refreshKey {
 	return sha256.Sum256([]byte(c.AccessToken + "\x00" + c.RefreshToken))
 }
 
@@ -69,8 +69,8 @@ func hasPendingRefreshSave(authID string, c Credential) bool {
 	refreshes.mu.Lock()
 	defer refreshes.mu.Unlock()
 	last, ok := refreshes.latest[authID]
-	key := keyOf(authID, c)
-	return ok && last.savePending && (key == keyOf(authID, last.to) || slices.Contains(last.history, key))
+	key := keyOf(c)
+	return ok && last.savePending && (key == keyOf(last.to) || slices.Contains(last.history, key))
 }
 
 // A save failure does not discard rotated tokens. The next executor/quota caller
@@ -89,7 +89,7 @@ func coordinateRefresh(authID string, c Credential, refresh func(Credential) (Cr
 		}
 		return fresh, err
 	}
-	key := keyOf(authID, c)
+	key := keyOf(c)
 	for {
 		refreshes.mu.Lock()
 		if call, ok := refreshes.inflight[authID]; ok {
@@ -101,7 +101,7 @@ func coordinateRefresh(authID string, c Credential, refresh func(Credential) (Cr
 			continue
 		}
 		last, exists := refreshes.latest[authID]
-		current := exists && key == keyOf(authID, last.to)
+		current := exists && key == keyOf(last.to)
 		knownOld := exists && !current && slices.Contains(last.history, key)
 		if repairSave && !current && !knownOld {
 			refreshes.mu.Unlock()
@@ -118,7 +118,7 @@ func coordinateRefresh(authID string, c Credential, refresh func(Credential) (Cr
 			if expiry, err := time.Parse(time.RFC3339, c.ExpiresAt); err == nil && !expiry.After(time.Now()) {
 				reuse = false
 			}
-		} else if exists && last.pruned && key != keyOf(authID, last.to) {
+		} else if exists && last.pruned && key != keyOf(last.to) {
 			// Once fingerprints are retired, unknown older snapshots fail closed.
 			// A newly signed-in credential with a later expiry can still replace it.
 			expiry, err := time.Parse(time.RFC3339, c.ExpiresAt)
@@ -162,9 +162,9 @@ func runRefresh(authID string, c Credential, result refreshResult, exists, reuse
 			return fresh, err
 		}
 		if exists {
-			result.remember(keyOf(authID, result.to))
+			result.remember(keyOf(result.to))
 		}
-		result.remember(keyOf(authID, c))
+		result.remember(keyOf(c))
 		result.to, result.persisted = fresh, false
 		result.savePending = false
 		call.cred = fresh

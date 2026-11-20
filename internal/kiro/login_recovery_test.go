@@ -19,16 +19,15 @@ func TestLoginStatusRestoresPublicAuthorizationDetails(t *testing.T) {
 		s.UserCode = "ABCD-EFGH"
 		s.DeviceExpiresAt = time.Now().Add(time.Minute)
 		s.Polling = true
-		s.DeviceCode = "secret-device"
-		s.ClientSecret = "secret-client"
 	})
 	status, body := callRoute(t, http.MethodGet, routeStatus, nil, url.Values{"state": {state}})
 	if status != 200 || body["verificationUri"] != "https://view.awsapps.com/start" || body["userCode"] != "ABCD-EFGH" || body["deviceExpiresAt"] == nil {
 		t.Fatalf("status=%d body=%v", status, body)
 	}
-	raw, _ := json.Marshal(body)
-	if strings.Contains(string(raw), "secret-") {
-		t.Fatal("status exposed a secret")
+	for _, key := range []string{"deviceCode", "clientId", "clientSecret"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("status exposed %s", key)
+		}
 	}
 	if _, err := claimSession(state, "device-idc"); err == nil {
 		t.Fatal("active device flow can be duplicated")

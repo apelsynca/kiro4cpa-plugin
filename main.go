@@ -143,10 +143,6 @@ func writeResponse(response *C.cliproxy_buffer, raw []byte) {
 	if response == nil || len(raw) == 0 {
 		return
 	}
-	ptr := C.CBytes(raw)
-	if ptr == nil {
-		return
-	}
-	response.ptr = ptr
+	response.ptr = C.CBytes(raw)
 	response.len = C.size_t(len(raw))
 }

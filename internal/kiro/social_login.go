@@ -34,12 +34,10 @@ var socialTokenURL = kiroAuthEndpoint + "/oauth/token"
 
 var socialHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-func randomURLToken(n int) (string, error) {
+func randomURLToken(n int) string {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func pkceChallenge(verifier string) string {

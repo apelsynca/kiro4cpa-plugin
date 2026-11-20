@@ -1,5 +1,9 @@
 # kiro4cpa Plugin
 
+## Commits
+
+- Commit every change you make. Use Conventional Commit prefixes such as `fix:`, `feat:`, or `chore:`.
+
 ## Model Discovery
 
 - Implement account-specific model discovery in the `kiro4cpa` plugin running inside CPA. Success means CPA exposes the models fetched for the plugin's own credential after a refresh.

@@ -6,7 +6,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+func newSSOOIDCClientForTest(endpoint string) *SSOOIDCClient {
+	return &SSOOIDCClient{
+		httpClient: &http.Client{Timeout: 5 * time.Second},
+		baseURLFn:  func(string) string { return endpoint },
+	}
+}
 
 func TestSSOOIDCClientFlow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

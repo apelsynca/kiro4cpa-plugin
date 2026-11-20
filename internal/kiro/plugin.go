@@ -135,7 +135,7 @@ func HandleMethod(method string, request []byte) (out []byte, err error) {
 		return handleAuthRefresh(request)
 
 	case pluginabi.MethodAuthLoginStart:
-		return handleLoginStart(request)
+		return handleLoginStart()
 
 	case pluginabi.MethodAuthLoginPoll:
 		return handleLoginPoll(request)
@@ -329,15 +329,8 @@ const loginSessionTTL = 30 * time.Minute
 
 // handleLoginStart only opens a session; the user picks a login method on the
 // connect page, which CPA's OAuth card opens in a new tab.
-func handleLoginStart(request []byte) ([]byte, error) {
-	var req pluginapi.AuthLoginStartRequest
-	if len(request) > 0 {
-		_ = json.Unmarshal(request, &req)
-	}
-	session, err := createLoginSession(loginSessionTTL)
-	if err != nil {
-		return nil, err
-	}
+func handleLoginStart() ([]byte, error) {
+	session := createLoginSession(loginSessionTTL)
 	return wire.OK(pluginapi.AuthLoginStartResponse{
 		Provider:  models.ProviderName,
 		URL:       connectPageURL(session.State),

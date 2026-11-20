@@ -201,9 +201,6 @@ func handleAPIDevice(req pluginapi.ManagementRequest) ([]byte, error) {
 	}
 
 	updateLoginSession(body.State, func(s *LoginSession) {
-		s.ClientID = regResp.ClientID
-		s.ClientSecret = regResp.ClientSecret
-		s.DeviceCode = authResp.DeviceCode
 		s.UserCode = authResp.UserCode
 		s.VerifyURL = verifyURL
 		s.Region = region
@@ -327,11 +324,8 @@ func handleAPISocialStart(req pluginapi.ManagementRequest) ([]byte, error) {
 			"redirectUri": socialRedirectURI,
 		})
 	}
-	verifier, err1 := randomURLToken(32)
-	socialState, err2 := randomURLToken(24)
-	if err1 != nil || err2 != nil {
-		return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "Could not generate sign-in parameters"})
-	}
+	verifier := randomURLToken(32)
+	socialState := randomURLToken(24)
 	updateLoginSession(body.State, func(s *LoginSession) {
 		s.CodeVerifier = verifier
 		s.SocialState = socialState

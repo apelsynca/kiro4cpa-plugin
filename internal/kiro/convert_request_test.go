@@ -10,7 +10,7 @@ var socialCred = Credential{AuthMethod: AuthMethodSocial, AuthRegion: "us-east-1
 
 func mustConvert(t *testing.T, raw string) convertedRequest {
 	t.Helper()
-	c, err := convertClaudeRequest([]byte(raw), socialCred)
+	c, err := convertClaudeRequest([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestConvertClaudeCodeTurn(t *testing.T) {
 	if c.ModelID != "claude-haiku-4.5" || !c.Thinking || st.ConversationID != "0a1b2c3d-1111-2222-3333-444455556666" {
 		t.Fatalf("model=%s thinking=%v conv=%s", c.ModelID, c.Thinking, st.ConversationID)
 	}
-	if c.Payload.ProfileArn != socialCred.ProfileArn || st.AgentTaskType != "vibe" || st.ChatTriggerType != "MANUAL" {
+	if st.AgentTaskType != "vibe" || st.ChatTriggerType != "MANUAL" {
 		t.Fatalf("payload %+v", c.Payload)
 	}
 	lead := st.History[0].UserInputMessage.Content
@@ -92,7 +92,7 @@ func TestConvertMergesUserRunsAndClosesWithAssistant(t *testing.T) {
 }
 
 func TestConvertRejectsRequestWithoutUserMessage(t *testing.T) {
-	if _, err := convertClaudeRequest([]byte(`{"model":"auto","messages":[{"role":"assistant","content":"x"}]}`), socialCred); err == nil {
+	if _, err := convertClaudeRequest([]byte(`{"model":"auto","messages":[{"role":"assistant","content":"x"}]}`)); err == nil {
 		t.Fatal("accepted a request with no user message")
 	}
 }

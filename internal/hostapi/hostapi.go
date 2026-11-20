@@ -70,9 +70,8 @@ func HTTPDo(req HTTPRequest) (*HTTPResponse, error) {
 
 // HTTPStreamResponse carries the upstream status and a stream to pull the body from.
 type HTTPStreamResponse struct {
-	StatusCode int                 `json:"status_code"`
-	Headers    map[string][]string `json:"headers,omitempty"`
-	StreamID   string              `json:"stream_id,omitempty"`
+	StatusCode int    `json:"status_code"`
+	StreamID   string `json:"stream_id,omitempty"`
 }
 
 type StreamChunk struct {

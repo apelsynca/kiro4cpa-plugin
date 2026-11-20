@@ -27,9 +27,7 @@ func handleExecuteStream(request []byte) ([]byte, error) {
 		return upstreamErrorEnvelope(err), nil
 	}
 	go pumpStream(upstream, req.StreamID, conv)
-	return wire.OK(struct {
-		Chunks []any `json:"chunks,omitempty"`
-	}{}), nil
+	return wire.OK(struct{}{}), nil
 }
 
 // openGenerateStream paces and parks per credential like postGenerate, before

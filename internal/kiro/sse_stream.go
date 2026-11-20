@@ -29,9 +29,8 @@ type sseStream struct {
 }
 
 type toolBlock struct {
-	index  int
-	sent   int
-	closed bool
+	index int
+	sent  int
 }
 
 func newSSEStream(conv convertedRequest) *sseStream {
@@ -146,8 +145,7 @@ func (s *sseStream) toolUse(tu ToolUseEvent) []sseEvent {
 		s.streamErr = &StreamError{Kind: "error", Code: "ContentFiltered", Message: "tool call arrived after upstream refusal"}
 		return nil
 	}
-	_, err := s.tools.add(tu)
-	if err != nil {
+	if err := s.tools.add(tu); err != nil {
 		s.streamErr = err
 		return nil
 	}
@@ -181,9 +179,6 @@ func (s *sseStream) emitTool(id string, t *collectedTool) []sseEvent {
 		return nil
 	}
 	block := s.toolBlocks[id]
-	if block != nil && block.closed {
-		return nil
-	}
 	var out []sseEvent
 	if block == nil {
 		out = s.closeBlock()
@@ -208,7 +203,6 @@ func (s *sseStream) emitTool(id string, t *collectedTool) []sseEvent {
 	}
 	if t.stopped {
 		out = append(out, sseEvent{"content_block_stop", map[string]any{"type": "content_block_stop", "index": block.index}})
-		block.closed = true
 	}
 	return out
 }

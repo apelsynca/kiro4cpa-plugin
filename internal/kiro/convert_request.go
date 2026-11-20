@@ -21,7 +21,7 @@ type convertedRequest struct {
 	InputTokens int
 }
 
-func convertClaudeRequest(raw []byte, cred Credential) (convertedRequest, error) {
+func convertClaudeRequest(raw []byte) (convertedRequest, error) {
 	var req claudeRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return convertedRequest{}, fmt.Errorf("decode claude request: %w", err)
@@ -66,7 +66,7 @@ func convertClaudeRequest(raw []byte, cred Credential) (convertedRequest, error)
 		History: history,
 	}
 	return convertedRequest{
-		Payload:     kiroPayload{ConversationState: state, ProfileArn: streamingProfileARN(cred), AdditionalModelRequestFields: nativeReasoningFields(req, modelID, suffixThinking)},
+		Payload:     kiroPayload{ConversationState: state, AdditionalModelRequestFields: nativeReasoningFields(req, modelID, suffixThinking)},
 		ModelID:     modelID,
 		Thinking:    thinkingEnabled(req, suffixThinking),
 		ToolNames:   toolNames,

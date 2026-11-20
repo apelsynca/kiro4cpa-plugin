@@ -16,9 +16,9 @@ type toolAccumulator struct {
 	tools map[string]*collectedTool
 }
 
-func (a *toolAccumulator) add(ev ToolUseEvent) (*collectedTool, *StreamError) {
+func (a *toolAccumulator) add(ev ToolUseEvent) *StreamError {
 	if ev.ToolUseID == "" {
-		return nil, toolStreamError("missing tool call ID")
+		return toolStreamError("missing tool call ID")
 	}
 	if a.tools == nil {
 		a.tools = make(map[string]*collectedTool)
@@ -31,22 +31,22 @@ func (a *toolAccumulator) add(ev ToolUseEvent) (*collectedTool, *StreamError) {
 	}
 	if ev.Name != "" {
 		if t.name != "" && t.name != ev.Name {
-			return t, toolStreamError("tool name changed within a call")
+			return toolStreamError("tool name changed within a call")
 		}
 		t.name = ev.Name
 	}
 	if t.stopped {
 		if ev.Input != "" {
-			return t, toolStreamError("tool input arrived after stop")
+			return toolStreamError("tool input arrived after stop")
 		}
-		return t, nil // tolerate a duplicate empty stop
+		return nil // tolerate a duplicate empty stop
 	}
 	t.input.WriteString(ev.Input)
 	if ev.Stop {
 		t.stopped = true
-		return t, t.validate()
+		return t.validate()
 	}
-	return t, nil
+	return nil
 }
 
 func (t *collectedTool) validate() *StreamError {

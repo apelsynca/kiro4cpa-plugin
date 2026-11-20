@@ -48,14 +48,14 @@ function page(fetcher, saved = true, options = {}) {
       if (selector === '.pane button') return [...elements.values()].filter(n => n.tag === 'button' && /^(btn-(builder|idc|social|import)|copy-)/.test(n.id));
       throw new Error('unexpected selector ' + selector);
     }},
-    setTimeout(fn, ms) {const id = ++timerID; timers.set(id, {fn, ms, once: true}); return id;},
+    setTimeout(fn) {const id = ++timerID; timers.set(id, {fn, once: true}); return id;},
     clearTimeout(id) {timers.delete(id);},
-    setInterval(fn, ms) {const id = ++timerID; timers.set(id, {fn, ms, once: false}); return id;},
+    setInterval(fn) {const id = ++timerID; timers.set(id, {fn, once: false}); return id;},
     clearInterval(id) {timers.delete(id);},
     async fetch(url, opts) {calls.push({url, opts}); if (url.startsWith('/v8/management/oauth/status?')) return options.hostFetch ? options.hostFetch(url, opts) : response({status: 'ok'}); return fetcher(calls.length, url, opts);}
   };
   vm.runInNewContext(script, context);
-  return {get, methods, calls, timers, root, context, media, storage, listeners,
+  return {get, methods, calls, root, media, storage, listeners,
     async click(id) {await get(id).handlers.click.call(get(id)); await settle();},
     async tick() {const entry = [...timers].find(([, v]) => v.once); assert.ok(entry, 'poll scheduled'); timers.delete(entry[0]); await entry[1].fn(); await settle();},
     polls() {return [...timers.values()].filter(v => v.once).length;}};

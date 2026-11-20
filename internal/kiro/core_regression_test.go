@@ -171,7 +171,7 @@ func TestCoreRegressionTrailingUserMessages(t *testing.T) {
   {"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"tool output"}]},
   {"role":"user","content":"background job finished"}
  ],"tools":[{"name":"Read","description":"Read a file","input_schema":{"type":"object"}}]}`)
-	conv, err := convertClaudeRequest(raw, Credential{})
+	conv, err := convertClaudeRequest(raw)
 	if err != nil {
 		t.Fatal(err)
 	}

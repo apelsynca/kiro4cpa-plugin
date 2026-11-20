@@ -109,9 +109,5 @@ func convertAssistant(m claudeMessage, toolNames map[string]string) assistantMes
 			uses = append(uses, kiroToolUse{ToolUseID: b.ID, Name: mapToolName(b.Name, toolNames), Input: input})
 		}
 	}
-	content := text.String()
-	if content == "" {
-		content = " "
-	}
-	return assistantMessage{Content: content, ToolUses: uses, ReasoningContent: selectHistoryReasoning([]claudeMessage{m})}
+	return assistantMessage{Content: text.String(), ToolUses: uses}
 }

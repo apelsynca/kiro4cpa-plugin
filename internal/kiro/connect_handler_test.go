@@ -51,11 +51,7 @@ func callRoute(t *testing.T, method, path string, body any, query url.Values) (i
 
 func newSession(t *testing.T) string {
 	t.Helper()
-	s, err := createLoginSession(10 * time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s.State
+	return createLoginSession(10 * time.Minute).State
 }
 
 func TestManagementRegistrationDeclaresConnectRoutes(t *testing.T) {

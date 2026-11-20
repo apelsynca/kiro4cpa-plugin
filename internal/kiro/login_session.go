@@ -16,11 +16,8 @@ type LoginSession struct {
 	Method string
 
 	// Device flow (Builder ID / IdC).
-	DeviceCode      string
 	UserCode        string
 	VerifyURL       string
-	ClientID        string
-	ClientSecret    string
 	Region          string
 	StartURL        string
 	Polling         bool
@@ -44,11 +41,9 @@ var (
 	loginSessions   = make(map[string]*LoginSession)
 )
 
-func createLoginSession(ttl time.Duration) (*LoginSession, error) {
+func createLoginSession(ttl time.Duration) *LoginSession {
 	b := make([]byte, 24)
-	if _, err := rand.Read(b); err != nil {
-		return nil, err
-	}
+	rand.Read(b)
 	state := hex.EncodeToString(b)
 	now := time.Now().UTC()
 	session := &LoginSession{
@@ -60,7 +55,7 @@ func createLoginSession(ttl time.Duration) (*LoginSession, error) {
 	defer loginSessionsMu.Unlock()
 	cleanupLoginSessionsLocked(now)
 	loginSessions[state] = session
-	return session, nil
+	return session
 }
 
 // getLoginSession returns a copy, so callers never read fields that a
@@ -76,8 +71,8 @@ func getLoginSession(state string) (*LoginSession, bool) {
 	return &snapshot, true
 }
 
-func completeLoginSession(state string, cred *Credential, message string) bool {
-	return updateLoginSession(state, func(s *LoginSession) {
+func completeLoginSession(state string, cred *Credential, message string) {
+	updateLoginSession(state, func(s *LoginSession) {
 		s.Completed = cred
 		s.Message = message
 		s.Error = ""
@@ -87,8 +82,8 @@ func completeLoginSession(state string, cred *Credential, message string) bool {
 	})
 }
 
-func failLoginSession(state string, errMessage string) bool {
-	return updateLoginSession(state, func(s *LoginSession) {
+func failLoginSession(state string, errMessage string) {
+	updateLoginSession(state, func(s *LoginSession) {
 		s.Error = errMessage
 		s.Polling = false
 		s.Busy = false
@@ -104,12 +99,6 @@ func updateLoginSession(state string, fn func(s *LoginSession)) bool {
 	}
 	fn(s)
 	return true
-}
-
-func cleanupLoginSessions(now time.Time) {
-	loginSessionsMu.Lock()
-	defer loginSessionsMu.Unlock()
-	cleanupLoginSessionsLocked(now)
 }
 
 func cleanupLoginSessionsLocked(now time.Time) {

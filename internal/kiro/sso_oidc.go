@@ -38,7 +38,6 @@ type StartDeviceAuthResponse struct {
 
 type CreateTokenResponse struct {
 	AccessToken  string `json:"accessToken"`
-	TokenType    string `json:"tokenType"`
 	ExpiresIn    int    `json:"expiresIn"`
 	RefreshToken string `json:"refreshToken"`
 	ProfileArn   string `json:"profileArn"`
@@ -60,13 +59,6 @@ func NewSSOOIDCClient() *SSOOIDCClient {
 			}
 			return fmt.Sprintf("https://oidc.%s.amazonaws.com", region)
 		},
-	}
-}
-
-func newSSOOIDCClientForTest(endpoint string) *SSOOIDCClient {
-	return &SSOOIDCClient{
-		httpClient: &http.Client{Timeout: 5 * time.Second},
-		baseURLFn:  func(string) string { return endpoint },
 	}
 }
 
