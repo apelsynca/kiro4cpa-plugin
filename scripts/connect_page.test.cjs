@@ -35,20 +35,14 @@ function page(fetcher, saved = true, options = {}) {
   const get = id => {assert.ok(elements.has(id), `missing DOM element ${id}`); return elements.get(id);};
   const storage = {'cli-proxy-auth': saved ? officialStorage({managementKey: 'test-key', rememberPassword: true, apiBase: 'https://example.test'}) : null, ...options.storage};
   const listeners = {}, media = {matches: Boolean(options.dark), addEventListener(name, fn) {this.listener = fn;}};
-  const root = {setAttribute(name, value) {this[name] = value;}, removeAttribute(name) {delete this[name];}};
-  const translated = [];
-  for (const match of html.matchAll(/<[^>]*data-i18n="([^"]+)"[^>]*>/g)) {
-    const id = match[0].match(/id="([^"]+)"/)?.[1];
-    const el = id ? get(id) : {textContent: '', setAttribute(name, value) {this[name] = value;}};
-    el.dataset = {...el.dataset, i18n: match[1]}; translated.push(el);
-  }
+  const root = {lang: html.match(/<html\b[^>]*\blang="([^"]+)"/)?.[1],
+    setAttribute(name, value) {this[name] = value;}, removeAttribute(name) {delete this[name];}};
   const context = {URL, URLSearchParams, TextEncoder, TextDecoder, Uint8Array, Date, Number, atob,
 
     location: {hash: '#state=example', host: 'example.test', origin: 'https://example.test', href: 'https://example.test/connect'},
-    navigator: {language: options.language || 'zh-CN', clipboard: {writeText: async () => {}}}, window: {matchMedia: () => media, addEventListener(name, fn) {listeners[name] = fn;}},
+    navigator: {language: options.language || 'en', clipboard: {writeText: async () => {}}}, window: {matchMedia: () => media, addEventListener(name, fn) {listeners[name] = fn;}},
     localStorage: {getItem(key) {if (options.storageBlocked) throw new Error('blocked'); return storage[key] ?? null;}},
     document: {documentElement: root, getElementById: get, querySelectorAll(selector) {
-      if (selector === '[data-i18n]') return translated;
       if (selector === '.method') return methods;
       if (selector === '.pane') return ['builder', 'social', 'idc', 'import'].map(p => get('pane-' + p));
       if (selector === '.pane button') return [...elements.values()].filter(n => n.tag === 'button' && /^(btn-(builder|idc|social|import)|copy-)/.test(n.id));
@@ -61,7 +55,7 @@ function page(fetcher, saved = true, options = {}) {
     async fetch(url, opts) {calls.push({url, opts}); if (url.startsWith('/v8/management/oauth/status?')) return options.hostFetch ? options.hostFetch(url, opts) : response({status: 'ok'}); return fetcher(calls.length, url, opts);}
   };
   vm.runInNewContext(script, context);
-  return {get, methods, calls, timers, root, context, media, storage, listeners, translated,
+  return {get, methods, calls, timers, root, context, media, storage, listeners,
     async click(id) {await get(id).handlers.click.call(get(id)); await settle();},
     async tick() {const entry = [...timers].find(([, v]) => v.once); assert.ok(entry, 'poll scheduled'); timers.delete(entry[0]); await entry[1].fn(); await settle();},
     polls() {return [...timers.values()].filter(v => v.once).length;}};
@@ -72,14 +66,14 @@ test('a failed manual key stops polling until explicit correction', async () => 
   assert.equal(p.calls.length, 0);
   p.get('mgmt-key').value = 'bad-key'; await p.click('btn-key-resume'); await p.tick();
   assert.equal(p.calls.length, 2); assert.equal(p.polls(), 0); assert.equal(p.get('mgmt-key').value, '');
-  assert.match(p.get('msg').textContent, /密钥无效/);
+  assert.match(p.get('msg').textContent, /Invalid management key/);
   await p.click('btn-social-complete'); assert.equal(p.calls.length, 2);
   p.get('mgmt-key').value = 'corrected'; await p.click('btn-key-resume');
   assert.equal(p.calls.length, 3); assert.equal(p.polls(), 1);
 });
 test('403 pauses with an access restriction explanation', async () => {
   const p = page(() => response({}, 403)); await settle();
-  assert.equal(p.polls(), 0); assert.match(p.get('msg').textContent, /访问限制/);
+  assert.equal(p.polls(), 0); assert.match(p.get('msg').textContent, /access restriction/);
   assert.equal(p.get('key-box').style.display, 'block');
 });
 test('reload restores social login pane and callback entry', async () => {
@@ -94,7 +88,7 @@ test('reload restores device authorization and countdown', async () => {
   await settle();
   assert.equal(p.get('code-idc').textContent, 'ABCD-EFGH'); assert.equal(p.get('btn-idc').disabled, true);
   assert.equal(p.get('device-idc').classList.contains('hidden'), false);
-  assert.equal(p.get('idc-region').value, 'eu-central-1'); assert.match(p.get('countdown').textContent, /剩余时间/);
+  assert.equal(p.get('idc-region').value, 'eu-central-1'); assert.match(p.get('countdown').textContent, /^Time remaining: \d+m \d+s$/);
 });
 test('three consecutive network failures stop rather than spin silently', async () => {
   const p = page(n => {if (n > 1) throw new Error('offline'); return response(pending());});
@@ -110,23 +104,23 @@ test('slow poll cannot overlap another poll or a login action', async () => {
   release(response(pending())); await tick; assert.equal(p.polls(), 1);
 });
 test('terminal device failure offers a fresh panel login', async () => {
-  const p = page(() => response({status: 'error', error: 'AWS 授权超时', method: 'device-builder'})); await settle();
+  const p = page(() => response({status: 'error', error: 'AWS authorization expired', method: 'device-builder'})); await settle();
   assert.equal(p.polls(), 0); assert.equal(p.get('btn-restart').classList.contains('hidden'), false);
-  assert.match(p.get('msg').textContent, /重新发起/);
+  assert.match(p.get('msg').textContent, /AWS authorization expired\. Return to the panel to start a new Kiro sign-in session\./);
 });
 test('invalid imports retain the validation warning after the host saves them', async () => {
-  const p = page(() => response({status: 'success', validation: 'invalid', warning: '凭据已失效', delivered: false})); await settle();
-  assert.equal(p.get('msg').className, 'msg warn'); assert.match(p.get('msg').textContent, /凭据已失效/);
-  assert.match(p.get('msg').textContent, /已保存/); assert.equal(p.polls(), 0);
+  const p = page(() => response({status: 'success', validation: 'invalid', warning: 'The credentials are no longer valid.', delivered: false})); await settle();
+  assert.equal(p.get('msg').className, 'msg warn');
+  assert.match(p.get('msg').textContent, /The credentials are no longer valid\. Credentials saved\./); assert.equal(p.polls(), 0);
 });
 test('expired session stops all future requests', async () => {
-  const p = page(() => response({error: '登录会话不存在或已过期'}, 404)); await settle();
+  const p = page(() => response({error: 'Sign-in session not found or expired'}, 404)); await settle();
   assert.equal(p.polls(), 0); assert.ok(p.methods.every(b => b.disabled));
 });
 
 
 test('official remembered UTF-8 key is decoded without storing or exposing it', async () => {
-  const key = 'test-密钥-🔑';
+  const key = 'test-cl\u00e9-\u{1f511}';
   const p = page(() => response(pending()), true, {storage: {'cli-proxy-auth': officialStorage({managementKey: key, rememberPassword: true, apiBase: 'https://example.test'})}});
   await settle();
   assert.equal(p.calls.length, 1);
@@ -158,14 +152,19 @@ test('official theme preference overrides system appearance and follows changes'
   }
 });
 
-test('language follows official preference, with browser and English fallbacks', async () => {
-  for (const [language, expected, label] of [['en', 'en', 'Verify key and continue'], ['zh-TW', 'zh-TW', '驗證金鑰並繼續'], ['ru', 'en', 'Verify key and continue']]) {
-    const p = page(() => response(pending()), false, {storage: {'cli-proxy-language': JSON.stringify({state: {language}})}});
-    assert.equal(p.root.lang, expected); assert.equal(p.get('btn-key-resume').textContent, label);
-    assert.doesNotMatch(p.get('msg').textContent, /请输入/);
+test('page stays in English regardless of panel and browser locales', () => {
+  assert.match(html, /<title>Kiro sign in<\/title>/);
+  assert.match(html, /id="btn-key-resume"[^>]*>Verify key and continue<\/button>/);
+  for (const options of [
+    {language: 'ru', storage: {'cli-proxy-language': JSON.stringify({state: {language: 'zh-TW'}})}},
+    {language: 'zh-CN', storage: {'cli-proxy-language': JSON.stringify({state: {language: 'ru'}})}},
+    {language: 'zh-HK', storageBlocked: true, dark: true}
+  ]) {
+    const p = page(() => response(pending()), false, options);
+    assert.equal(p.root.lang, 'en');
+    assert.match(p.get('msg').textContent, /^Enter your management key/);
+    if (options.dark) assert.equal(p.root['data-theme'], 'dark');
   }
-  const p = page(() => response(pending()), false, {storageBlocked: true, language: 'zh-HK', dark: true});
-  assert.equal(p.root.lang, 'zh-TW'); assert.equal(p.root['data-theme'], 'dark');
 });
 
 test('return navigation works with no opener after success and failure', async () => {
@@ -187,9 +186,9 @@ test('credentials are only reported saved after the official host confirms', asy
   }});
   await settle();
   assert.equal(hostCalls, 1); assert.equal(p.polls(), 1);
-  assert.doesNotMatch(p.get('msg').textContent, /已保存/);
+  assert.doesNotMatch(p.get('msg').textContent, /Credentials saved/);
   await p.tick(); assert.equal(hostCalls, 2); assert.equal(p.polls(), 0);
-  assert.match(p.get('msg').textContent, /已保存/);
+  assert.match(p.get('msg').textContent, /Credentials saved/);
 });
 
 test('host save failure is shown even after plugin completion', async () => {
@@ -204,7 +203,7 @@ test('host confirmation also pauses on 401 and can resume after key correction',
   const p = page(() => response({status: 'success'}), true, {hostFetch: () => ++hostCalls === 1 ? response({}, 401) : response({status: 'ok'})});
   await settle(); assert.equal(p.polls(), 0); assert.equal(hostCalls, 1);
   p.get('mgmt-key').value = 'corrected'; await p.click('btn-key-resume');
-  assert.equal(hostCalls, 2); assert.match(p.get('msg').textContent, /已保存/);
+  assert.equal(hostCalls, 2); assert.match(p.get('msg').textContent, /Credentials saved/);
 });
 
 test('a failed host confirmation never enables importing the same credentials twice', async () => {
@@ -220,6 +219,6 @@ test('a failed host confirmation never enables importing the same credentials tw
 test('an unexpected host response cannot report credentials saved', async () => {
   const p = page(() => response({status: 'success'}), true, {hostFetch: () => response({})});
   await settle();
-  assert.equal(p.get('msg').className, 'msg err'); assert.doesNotMatch(p.get('msg').textContent, /已保存/);
+  assert.equal(p.get('msg').className, 'msg err'); assert.doesNotMatch(p.get('msg').textContent, /Credentials saved/);
   assert.equal(p.get('btn-resume').classList.contains('hidden'), false);
 });

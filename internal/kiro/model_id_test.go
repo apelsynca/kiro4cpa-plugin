@@ -36,7 +36,7 @@ func TestEstimateTokens(t *testing.T) {
 	if got := estimateTokens("abcdefgh"); got != 2 {
 		t.Errorf("ascii: %d", got)
 	}
-	if got := estimateTokens("你好世"); got != 2 {
+	if got := estimateTokens("\u4f60\u597d\u4e16"); got != 2 {
 		t.Errorf("cjk: %d", got)
 	}
 	if got := estimateTokens(""); got != 1 {
@@ -57,8 +57,8 @@ func TestMapToolName(t *testing.T) {
 	if again := mapToolName(long, map[string]string{}); again != short {
 		t.Fatalf("not deterministic: %s vs %s", again, short)
 	}
-	cjk := mapToolName(strings.Repeat("工具", 20), names)
-	if len(cjk) > maxToolNameBytes || !utf8.ValidString(cjk) {
-		t.Fatalf("multibyte name cut badly: %q (%d bytes)", cjk, len(cjk))
+	multibyte := mapToolName(strings.Repeat("\u20ac", 40), names)
+	if len(multibyte) > maxToolNameBytes || !utf8.ValidString(multibyte) {
+		t.Fatalf("multibyte name cut badly: %q (%d bytes)", multibyte, len(multibyte))
 	}
 }

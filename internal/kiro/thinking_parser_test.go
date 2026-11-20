@@ -36,10 +36,10 @@ func splitEvery(s string, n int) []string {
 }
 
 func TestThinkingParserAnyChunking(t *testing.T) {
-	full := "<thinking>\nplan 中文 step</thinking>\n\nanswer with `<thinking>` inside"
+	full := "<thinking>\nplan the \u20ac budget</thinking>\n\nanswer with `<thinking>` inside"
 	for _, n := range []int{1, 2, 3, 7, 1000} {
 		thinking, text, ends := runParser(splitEvery(full, n))
-		if thinking != "plan 中文 step" || text != "answer with `<thinking>` inside" || ends != 1 {
+		if thinking != "plan the \u20ac budget" || text != "answer with `<thinking>` inside" || ends != 1 {
 			t.Errorf("chunk %d: thinking=%q text=%q ends=%d", n, thinking, text, ends)
 		}
 	}

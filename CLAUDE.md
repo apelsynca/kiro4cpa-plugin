@@ -1,60 +1,58 @@
-# kiro4cpa-plugin 开发规则
+# kiro4cpa-plugin Development Rules
 
-## 插件标识
+## Plugin identity
 
-CPA 从动态库文件名去掉扩展名得到插件 ID 和版本：
+CPA removes the extension from the library filename to determine the plugin ID and version:
 
-- 生产产物必须命名 `kiro4cpa-v<版本>.so`（或 `.dylib` / `.dll`）
-- 不能叫 `kiro4cpa.so`，否则插件 ID 会变成 `kiro4cpa`，版本丢失
-- 代码里的 `pluginID = "kiro4cpa"` 必须与文件名前缀一致
+- Production binaries must be named `kiro4cpa-v<version>.so` (or `.dylib` / `.dll`).
+- Do not name the library `kiro4cpa.so`. CPA will register the ID `kiro4cpa` without a version.
+- The `pluginID = "kiro4cpa"` constant in the code must match the filename prefix.
 
-## 本地调试流程
+## Local debugging
 
-Mac 上 `make build-darwin` 会因 Xcode SDK 的 `.tbd` 不认 `arm64e.x1`
-架构而链接失败，这是环境问题，不是代码问题。调试走 Docker：
+On the Mac development environment, `make build-darwin` fails to link because the Xcode SDK's `.tbd` files do not recognize the `arm64e.x1` architecture. This is an environment issue, not a code issue. Use Docker for debugging. Replace `<version>` with the target plugin version:
 
-    make build-linux-docker
-    scp bin/linux/amd64/kiro4cpa.so aliyun-cloud:/tmp/
-    ssh aliyun-cloud 'cp /tmp/kiro4cpa.so \
-      /docker/api4ai/cpa_data/plugins/linux/amd64/kiro4cpa-v<版本>.so && \
-      docker restart cpa'
+```sh
+make build-linux-docker
+scp bin/linux/amd64/kiro4cpa.so aliyun-cloud:/tmp/
+ssh aliyun-cloud 'cp /tmp/kiro4cpa.so \
+  /docker/api4ai/cpa_data/plugins/linux/amd64/kiro4cpa-v<version>.so && \
+  docker restart cpa'
+```
 
-服务器是 CPA v8.0.42，插件数据目录 `/CLIProxyAPI/data` 已挂载到宿主机
-`/docker/api4ai/cpa_data/data`。管理接口有 IP 封禁保护，不要用命令反复猜
-管理密钥，管理操作走面板。
+The server runs CPA v8.0.42. Its plugin data directory, `/CLIProxyAPI/data`, is mounted at `/docker/api4ai/cpa_data/data` on the host. The management API can block IP addresses. Do not repeatedly guess the management key from the command line; use the management panel for administrative actions.
 
-## 发布流程
+## Release process
 
-1. 改 `internal/kiro/version.go` 的版本号（必须递增，商店按版本比较）
-2. `make test && go vet ./... && gofmt -l .`
-3. commit → push main
-4. `git tag -a v<版本> -m "v<版本>" && git push origin v<版本>`
-5. CI 自动运行测试、编译 5 个平台、创建 GitHub Release
+1. Bump the version in `internal/kiro/version.go`. It must increase because the store compares version numbers.
+2. Run `make test && go vet ./... && gofmt -l .`.
+3. Commit the changes and push `main`.
+4. Run `git tag -a v<version> -m "v<version>" && git push origin v<version>`.
+5. CI runs the tests, builds five platform targets, and creates a GitHub Release.
 
-**推 tag 即正式发布。** 调试期间不要推 tag。
+**Pushing a tag publishes an official release.** Do not push tags while debugging.
 
-## 官方插件商店
+## Official plugin store
 
-`kiro4cpa` 已在官方 registry（PR #287 已合并）。发布新版本只需推 tag，
-商店读取最新的 GitHub Release，无需再向官方提 PR。
+`kiro4cpa` is already in the official registry (PR #287 was merged). To release a new version, push the tag. The store reads the latest GitHub Release; no new upstream PR is needed.
 
-只有以下情况需要修改官方 `registry.json`：
+Update the official `registry.json` only when:
 
-- 插件名称、描述、logo、仓库地址变化
-- 新增插件
+- The plugin's name, description, logo, or repository URL changes.
+- A new plugin is added.
 
-项目内的 `registry.json` 保留作为备用分发源。
+Keep this repository's `registry.json` as a fallback distribution source.
 
-## 测试要求
+## Testing requirements
 
-- `go test ./... -race` 必须通过
-- `internal/kiro` 覆盖率保持在 85% 以上
-- 提交前 `gofmt -l .` 无输出，`go vet ./...` 无错误
-- CI 在 Linux / macOS / Windows 三平台跑测试
+- `go test ./... -race` must pass.
+- Keep test coverage for `internal/kiro` above 85%.
+- Before committing, `gofmt -l .` must produce no output and `go vet ./...` must report no errors.
+- CI runs tests on Linux, macOS, and Windows.
 
-## 代码约定
+## Code conventions
 
-- 只实现 Claude Messages 执行器，OpenAI 格式由 CPA 转换
-- 执行器不持有 caller context，无法长等待；限速超上限时返回 429 交给 CPA 换号
-- 凭据状态按 `AuthID`（文件名）区分，不用 accessToken，token 刷新后状态不丢
-- 上游错误按状态码分类：402/403 冷却换号，429 走 CPA 退避，5xx 报 502
+- Implement only the Claude Messages executor. CPA converts OpenAI formats.
+- The executor does not have the caller context and cannot wait for long periods. If a request would wait longer than the pacing limit, return 429 so CPA can switch accounts.
+- Key credential state by `AuthID` (the filename), not by access token, so it survives token refreshes.
+- Classify upstream errors by status: 402/403 trigger cooldown and failover, 429 uses CPA's backoff, and 5xx is reported as 502.

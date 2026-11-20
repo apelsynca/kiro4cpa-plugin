@@ -82,7 +82,7 @@ func handleQuotaFetch(request []byte) ([]byte, error) {
 	if err != nil {
 		var up *UpstreamError
 		if errors.As(err, &up) && up.Kind == ErrTokenInvalid {
-			return wire.ErrorStatus("quota_auth_failed", "额度查询认证失败，请重新授权 Kiro 账号", http.StatusUnauthorized, false), nil
+			return wire.ErrorStatus("quota_auth_failed", "Quota lookup authentication failed. Please reauthorize your Kiro account.", http.StatusUnauthorized, false), nil
 		}
 		return upstreamErrorEnvelope(err), nil
 	}
@@ -91,7 +91,7 @@ func handleQuotaFetch(request []byte) ([]byte, error) {
 		return wire.ErrorStatus("upstream_error", "decode kiro usage limits: "+err.Error(), http.StatusBadGateway, true), nil
 	}
 	if len(limits.UsageBreakdownList) == 0 {
-		return wire.ErrorStatus("quota_unavailable", "Kiro 未返回用量数据，请稍后重试", http.StatusBadGateway, true), nil
+		return wire.ErrorStatus("quota_unavailable", "Kiro did not return usage data. Please try again later.", http.StatusBadGateway, true), nil
 	}
 	return wire.OK(quotaResponse(limits)), nil
 }
@@ -181,25 +181,25 @@ func quotaResponse(l usageLimits) pluginapi.QuotaFetchResponse {
 		name := firstNonEmpty(it.DisplayName, it.ResourceType, "Credit")
 		key := strings.ToLower(firstNonEmpty(it.ResourceType, "credit"))
 		used, limit := it.Used, it.Limit
-		buckets := []pluginapi.QuotaBucket{quotaBucket("monthly", "月度", it.Used, it.Limit, it.NextDateReset)}
+		buckets := []pluginapi.QuotaBucket{quotaBucket("monthly", "Monthly", it.Used, it.Limit, it.NextDateReset)}
 		if t := it.FreeTrialInfo; t != nil && t.Status == quotaActive && t.Limit > 0 {
 			used, limit = used+t.Used, limit+t.Limit
-			buckets = append(buckets, quotaBucket("free_trial", "免费试用", t.Used, t.Limit, t.Expiry))
+			buckets = append(buckets, quotaBucket("free_trial", "Free trial", t.Used, t.Limit, t.Expiry))
 		}
 		for _, b := range it.Bonuses {
 			if b.Status == quotaActive && b.Limit > 0 {
 				used, limit = used+b.Used, limit+b.Limit
-				label := "赠送"
+				label := "Bonus"
 				if b.DisplayName != "" {
-					label += "（" + b.DisplayName + "）"
+					label += " (" + b.DisplayName + ")"
 				}
 				buckets = append(buckets, quotaBucket(firstNonEmpty(b.DisplayName, "bonus"), label, b.Used, b.Limit, b.ExpiresAt))
 			}
 		}
 		// The summary is the total usable credit, as kiro.rs reports it.
 		out.Summary = append(out.Summary,
-			pluginapi.QuotaMetric{Key: key + "_used", Label: "已用", Value: used, Unit: name},
-			pluginapi.QuotaMetric{Key: key + "_limit", Label: "上限", Value: limit, Unit: name},
+			pluginapi.QuotaMetric{Key: key + "_used", Label: "Used", Value: used, Unit: name},
+			pluginapi.QuotaMetric{Key: key + "_limit", Label: "Limit", Value: limit, Unit: name},
 		)
 		out.Groups = append(out.Groups, pluginapi.QuotaGroup{DisplayName: name, Buckets: buckets})
 	}
@@ -213,7 +213,7 @@ func quotaBucket(window, label string, used, limit, resetUnix float64) pluginapi
 	if limit > 0 {
 		b.RemainingFraction = max(0, min(1, 1-used/limit))
 		if used >= limit {
-			b.Description += "；额度已用完"
+			b.Description += "; quota exhausted"
 		}
 	}
 	if resetUnix > 0 {

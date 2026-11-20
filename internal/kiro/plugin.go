@@ -366,12 +366,12 @@ func handleLoginPoll(request []byte) ([]byte, error) {
 	case session.Method == "":
 		return wire.OK(pluginapi.AuthLoginPollResponse{
 			Status:  pluginapi.AuthLoginStatusPending,
-			Message: "等待在 Kiro 登录页选择登录方式",
+			Message: "Waiting for a sign-in method to be selected on the Kiro sign-in page",
 		}), nil
 	}
 	return wire.OK(pluginapi.AuthLoginPollResponse{
 		Status:  pluginapi.AuthLoginStatusPending,
-		Message: "等待完成 Kiro 授权",
+		Message: "Waiting for Kiro authorization to complete",
 	}), nil
 }
 

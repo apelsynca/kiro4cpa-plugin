@@ -116,7 +116,7 @@ func claimSession(state, method string) (*LoginSession, error) {
 	case conflict:
 		return nil, errSessionUsed
 	case busy:
-		return nil, errors.New("授权请求正在处理中，请等待结果")
+		return nil, errors.New("authorization is in progress; please wait for the result")
 	}
 	return claimed, nil
 }
@@ -126,8 +126,8 @@ func releaseSession(state string) {
 }
 
 var (
-	errSessionNotFound = errors.New("登录会话不存在或已过期，请回到面板重新发起登录")
-	errSessionUsed     = errors.New("该登录会话已使用其他方式，请回到面板重新发起登录")
+	errSessionNotFound = errors.New("sign-in session does not exist or has expired; start a new sign-in from the management panel")
+	errSessionUsed     = errors.New("this session already uses another sign-in method; start a new sign-in from the management panel")
 )
 
 func sessionError(err error) ([]byte, error) {
@@ -140,10 +140,10 @@ func sessionError(err error) ([]byte, error) {
 
 func decodeBody(req pluginapi.ManagementRequest, out any) error {
 	if len(req.Body) > maxPastedField*4 {
-		return errors.New("请求内容过大")
+		return errors.New("request body is too large")
 	}
 	if err := json.Unmarshal(req.Body, out); err != nil {
-		return errors.New("请求格式不正确")
+		return errors.New("invalid request format")
 	}
 	return nil
 }
@@ -167,14 +167,14 @@ func handleAPIDevice(req pluginapi.ManagementRequest) ([]byte, error) {
 		region = defaultSSORegion
 	case "idc":
 		if err := validateRegion(region); err != nil {
-			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "Region 格式不正确"})
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "Invalid region format"})
 		}
 		if !validIdCStartURL(body.StartURL) {
-			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "Start URL 应为 https://<目录>.awsapps.com/start"})
+			return jsonResponse(http.StatusBadRequest, map[string]string{"error": "Start URL must be https://<directory>.awsapps.com/start"})
 		}
 		startURL = strings.TrimRight(strings.TrimSpace(body.StartURL), "/")
 	default:
-		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "不支持的登录方式"})
+		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "Unsupported sign-in method"})
 	}
 	if _, err := claimSession(body.State, "device-"+body.Kind); err != nil {
 		return sessionError(err)
@@ -186,18 +186,18 @@ func handleAPIDevice(req pluginapi.ManagementRequest) ([]byte, error) {
 	defer cancel()
 	regResp, err := oidc.RegisterClient(ctx, region)
 	if err != nil {
-		failLoginSession(body.State, "AWS 客户端注册失败: "+err.Error())
-		return jsonResponse(http.StatusBadGateway, map[string]string{"error": "AWS 客户端注册失败: " + err.Error()})
+		failLoginSession(body.State, "AWS client registration failed: "+err.Error())
+		return jsonResponse(http.StatusBadGateway, map[string]string{"error": "AWS client registration failed: " + err.Error()})
 	}
 	authResp, err := oidc.StartDeviceAuth(ctx, regResp.ClientID, regResp.ClientSecret, startURL, region)
 	if err != nil {
-		failLoginSession(body.State, "AWS 设备授权失败: "+err.Error())
-		return jsonResponse(http.StatusBadGateway, map[string]string{"error": "AWS 设备授权失败: " + err.Error()})
+		failLoginSession(body.State, "AWS device authorization failed: "+err.Error())
+		return jsonResponse(http.StatusBadGateway, map[string]string{"error": "AWS device authorization failed: " + err.Error()})
 	}
 	verifyURL := firstNonEmpty(authResp.VerificationURIComplete, authResp.VerificationURI)
 	if !trustedAWSURL(verifyURL) {
-		failLoginSession(body.State, "AWS 返回了不可信的授权地址")
-		return jsonResponse(http.StatusBadGateway, map[string]string{"error": "AWS 返回了不可信的授权地址"})
+		failLoginSession(body.State, "AWS returned an untrusted authorization URL")
+		return jsonResponse(http.StatusBadGateway, map[string]string{"error": "AWS returned an untrusted authorization URL"})
 	}
 
 	updateLoginSession(body.State, func(s *LoginSession) {
@@ -273,7 +273,7 @@ func pollDeviceToken(state string, oidc *SSOOIDCClient, g deviceGrant) {
 			return
 		}
 		if time.Now().After(deadline) {
-			failLoginSession(state, "AWS 授权已超时，请重新发起登录")
+			failLoginSession(state, "AWS authorization expired")
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -294,13 +294,13 @@ func pollDeviceToken(state string, oidc *SSOOIDCClient, g deviceGrant) {
 				ProfileArn:   tok.ProfileArn,
 				ExpiresAt:    time.Now().UTC().Add(time.Duration(tok.ExpiresIn) * time.Second).Format(time.RFC3339),
 			}
-			completeLoginSession(state, cred, "Kiro 设备授权已完成")
+			completeLoginSession(state, cred, "Kiro device authorization completed")
 			return
 		case errors.Is(err, ErrSlowDown):
 			wait += 5 * time.Second
 		case errors.Is(err, ErrAuthPending):
 		default:
-			failLoginSession(state, "AWS 授权失败: "+err.Error())
+			failLoginSession(state, "AWS authorization failed: "+err.Error())
 			return
 		}
 	}
@@ -330,7 +330,7 @@ func handleAPISocialStart(req pluginapi.ManagementRequest) ([]byte, error) {
 	verifier, err1 := randomURLToken(32)
 	socialState, err2 := randomURLToken(24)
 	if err1 != nil || err2 != nil {
-		return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "生成登录参数失败"})
+		return jsonResponse(http.StatusInternalServerError, map[string]string{"error": "Could not generate sign-in parameters"})
 	}
 	updateLoginSession(body.State, func(s *LoginSession) {
 		s.CodeVerifier = verifier
@@ -358,14 +358,14 @@ func handleAPISocialComplete(req pluginapi.ManagementRequest) ([]byte, error) {
 	}
 	defer releaseSession(body.State)
 	if session.CodeVerifier == "" {
-		return jsonResponse(http.StatusConflict, map[string]string{"error": "请先点击“打开 Kiro 登录页”"})
+		return jsonResponse(http.StatusConflict, map[string]string{"error": `Select "Open Kiro sign in" first`})
 	}
 	cb, err := parseSocialCallback(body.CallbackURL)
 	if err != nil {
 		return jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if cb.State != session.SocialState {
-		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "回调地址的 state 与本次登录不匹配，请重新打开 Kiro 登录页"})
+		return jsonResponse(http.StatusBadRequest, map[string]string{"error": "The callback URL's state does not match this sign-in session. Reopen the Kiro sign-in page."})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -387,7 +387,7 @@ func handleAPISocialComplete(req pluginapi.ManagementRequest) ([]byte, error) {
 		AuthRegion:   defaultRegion,
 		ExpiresAt:    time.Now().UTC().Add(lifetime).Format(time.RFC3339),
 	}
-	completeLoginSession(body.State, cred, "Kiro "+methodLabel(*cred)+" 登录已完成")
+	completeLoginSession(body.State, cred, "Kiro sign-in with "+methodLabel(*cred)+" completed")
 	return jsonResponse(http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -421,16 +421,16 @@ func handleAPIImport(req pluginapi.ManagementRequest) ([]byte, error) {
 		cred, err = refreshCredential(cred, config.Get(), "", time.Now())
 	}
 	if err != nil {
-		validation, warning = "unverified", "暂时无法验证凭据，请在管理面板检查账号状态"
+		validation, warning = "unverified", "Credentials could not be verified right now. Check the account status in the management panel."
 		var up *UpstreamError
 		if errors.Is(err, ErrInvalidGrant) || (errors.As(err, &up) && up.Kind == ErrTokenInvalid) {
-			validation, warning = "invalid", "凭据已失效，请重新授权或导入有效凭据"
+			validation, warning = "invalid", "Credentials are no longer valid. Reauthorize or import valid credentials."
 		}
 	}
 	updateLoginSession(body.State, func(s *LoginSession) {
 		s.Validation, s.Warning = validation, warning
 	})
-	completeLoginSession(body.State, &cred, "Kiro 凭据已导入")
+	completeLoginSession(body.State, &cred, "Kiro credentials imported")
 	return handleAPIStatus(pluginapi.ManagementRequest{Query: url.Values{"state": {body.State}}})
 }
 
@@ -438,7 +438,7 @@ func importedCredential(body importRequest) (Credential, error) {
 	trim := func(s string) string { return strings.TrimSpace(s) }
 	for _, v := range []string{body.RefreshToken, body.ClientID, body.ClientSecret, body.KiroAPIKey} {
 		if len(v) > maxPastedField {
-			return Credential{}, errors.New("凭据内容过长")
+			return Credential{}, errors.New("credential data is too long")
 		}
 	}
 	region := firstNonEmpty(body.Region, defaultRegion)
@@ -452,7 +452,7 @@ func importedCredential(body importRequest) (Credential, error) {
 		cred = Credential{AuthMethod: AuthMethodIDC, RefreshToken: trim(body.RefreshToken),
 			ClientID: trim(body.ClientID), ClientSecret: trim(body.ClientSecret), Region: region, AuthRegion: region}
 	default:
-		return Credential{}, errors.New("不支持的导入方式")
+		return Credential{}, errors.New("unsupported import method")
 	}
 	cred = cred.normalized()
 	if err := cred.validate(); err != nil {

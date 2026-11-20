@@ -43,11 +43,11 @@ func TestRefreshKeepsAccountEnabledWhenKiroRejectsListing(t *testing.T) {
 }
 
 func TestRefreshKeepsUserNoteWhenBlocking(t *testing.T) {
-	storage := strings.Replace(kiroRsSocial, `{`, `{"note":"主力账号",`, 1)
+	storage := strings.Replace(kiroRsSocial, `{`, `{"note":"Primary account",`, 1)
 	resp, fields := refreshWith(t, storage, func() (*hostapi.HTTPResponse, error) {
 		return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(blockedBody)}, nil
 	})
-	if resp.Auth.Disabled || fields["note"] != "主力账号" {
+	if resp.Auth.Disabled || fields["note"] != "Primary account" {
 		t.Fatalf("disabled %v note %v", resp.Auth.Disabled, fields["note"])
 	}
 }

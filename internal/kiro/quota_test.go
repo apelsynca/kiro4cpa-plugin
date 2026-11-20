@@ -42,11 +42,11 @@ func TestQuotaFetchMapsUsageLimits(t *testing.T) {
 		t.Fatalf("groups %+v", resp.Groups)
 	}
 	monthly, trial := resp.Groups[0].Buckets[0], resp.Groups[0].Buckets[1]
-	if monthly.Window != "monthly" || monthly.Description != "月度 · 2.79 / 50" || monthly.ResetTime != "2026-11-01T00:00:00Z" ||
+	if monthly.Window != "monthly" || monthly.Description != "Monthly · 2.79 / 50" || monthly.ResetTime != "2026-11-01T00:00:00Z" ||
 		monthly.RemainingFraction < 0.944 || monthly.RemainingFraction > 0.945 {
 		t.Fatalf("monthly %+v", monthly)
 	}
-	if trial.Window != "free_trial" || trial.RemainingFraction != 0.75 || trial.Description != "免费试用 · 10 / 40" {
+	if trial.Window != "free_trial" || trial.RemainingFraction != 0.75 || trial.Description != "Free trial · 10 / 40" {
 		t.Fatalf("trial %+v", trial)
 	}
 }
@@ -134,7 +134,7 @@ func TestQuotaIgnoresExpiredTrialAndBonus(t *testing.T) {
 		t.Fatalf("summary %+v", resp.Summary)
 	}
 	buckets := resp.Groups[0].Buckets
-	if len(buckets) != 2 || buckets[0].Window != "monthly" || buckets[1].Window != "Launch" || buckets[1].Description != "赠送（Launch） · 5 / 20" {
+	if len(buckets) != 2 || buckets[0].Window != "monthly" || buckets[1].Window != "Launch" || buckets[1].Description != "Bonus (Launch) · 5 / 20" {
 		t.Fatalf("buckets %+v", buckets)
 	}
 }
@@ -162,8 +162,8 @@ func TestQuotaMissingUsageIsAnError(t *testing.T) {
 }
 
 func TestQuotaExhaustionDescription(t *testing.T) {
-	bucket := quotaBucket("monthly", "月度", 1000, 1000, 1796083200)
-	if bucket.RemainingFraction != 0 || !strings.Contains(bucket.Description, "额度已用完") || bucket.ResetTime != "2026-12-01T00:00:00Z" {
+	bucket := quotaBucket("monthly", "Monthly", 1000, 1000, 1796083200)
+	if bucket.RemainingFraction != 0 || !strings.Contains(bucket.Description, "quota exhausted") || bucket.ResetTime != "2026-12-01T00:00:00Z" {
 		t.Fatalf("bucket=%+v", bucket)
 	}
 }
@@ -184,10 +184,10 @@ func TestQuotaLabelsSurviveHostRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(raw, &host); err != nil {
 		t.Fatal(err)
 	}
-	if host.Summary[0].Label != "已用" || host.Summary[1].Label != "上限" || host.Summary[0].Unit != "Credit" {
+	if host.Summary[0].Label != "Used" || host.Summary[1].Label != "Limit" || host.Summary[0].Unit != "Credit" {
 		t.Fatalf("summary labels %+v", host.Summary)
 	}
-	for i, want := range []string{"月度 · 2.79 / 50", "免费试用 · 10 / 40", "赠送（Welcome） · 1 / 10", "赠送 · 0 / 5"} {
+	for i, want := range []string{"Monthly · 2.79 / 50", "Free trial · 10 / 40", "Bonus (Welcome) · 1 / 10", "Bonus · 0 / 5"} {
 		if got := host.Groups[0].Buckets[i].Description; got != want {
 			t.Errorf("bucket %d: %q, want %q", i, got, want)
 		}

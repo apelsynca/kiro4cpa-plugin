@@ -69,18 +69,18 @@ type socialCallback struct {
 func parseSocialCallback(raw string) (socialCallback, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.RawQuery == "" {
-		return socialCallback{}, errors.New("请粘贴浏览器地址栏中完整的回调地址")
+		return socialCallback{}, errors.New("paste the full callback URL from the browser's address bar")
 	}
 	if u.Path != "/oauth/callback" && u.Path != "/signin/callback" {
-		return socialCallback{}, errors.New("回调地址路径不正确，应为 /oauth/callback")
+		return socialCallback{}, errors.New("invalid callback URL path: expected /oauth/callback")
 	}
 	q := u.Query()
 	if e := q.Get("error"); e != "" {
-		return socialCallback{}, fmt.Errorf("Kiro 登录失败: %s", firstNonEmpty(q.Get("error_description"), e))
+		return socialCallback{}, fmt.Errorf("Kiro sign-in failed: %s", firstNonEmpty(q.Get("error_description"), e))
 	}
 	cb := socialCallback{Code: q.Get("code"), State: q.Get("state"), LoginOption: q.Get("login_option"), Path: u.Path}
 	if cb.Code == "" {
-		return socialCallback{}, errors.New("回调地址缺少 code")
+		return socialCallback{}, errors.New("callback URL is missing the code parameter")
 	}
 	return cb, nil
 }
@@ -123,19 +123,19 @@ func exchangeSocialCode(ctx context.Context, cb socialCallback, verifier string,
 	req.Header.Set("User-Agent", "KiroIDE-"+cfg.ClientVersion)
 	resp, err := socialHTTPClient.Do(req)
 	if err != nil {
-		return socialTokenResponse{}, fmt.Errorf("Kiro token 交换失败: %w", err)
+		return socialTokenResponse{}, fmt.Errorf("Kiro token exchange failed: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxSocialTokenBytes))
 	if resp.StatusCode != http.StatusOK {
-		return socialTokenResponse{}, fmt.Errorf("Kiro token 交换失败: HTTP %d %s", resp.StatusCode, truncate(string(raw), 200))
+		return socialTokenResponse{}, fmt.Errorf("Kiro token exchange failed: HTTP %d %s", resp.StatusCode, truncate(string(raw), 200))
 	}
 	var tok socialTokenResponse
 	if err := json.Unmarshal(raw, &tok); err != nil {
-		return socialTokenResponse{}, fmt.Errorf("解析 Kiro token 响应失败: %w", err)
+		return socialTokenResponse{}, fmt.Errorf("could not parse the Kiro token response: %w", err)
 	}
 	if tok.AccessToken == "" || tok.RefreshToken == "" {
-		return socialTokenResponse{}, errors.New("Kiro token 响应缺少 accessToken 或 refreshToken")
+		return socialTokenResponse{}, errors.New("Kiro token response is missing accessToken or refreshToken")
 	}
 	return tok, nil
 }

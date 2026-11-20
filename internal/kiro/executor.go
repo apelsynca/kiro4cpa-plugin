@@ -133,7 +133,7 @@ func withRefresh[T any](target refreshTarget, cred Credential, send func(Credent
 	refreshed, errRefresh := refreshForRequest(target, cred, false)
 	if errRefresh != nil {
 		if errors.Is(errRefresh, ErrInvalidGrant) {
-			return resp, &UpstreamError{Status: http.StatusUnauthorized, Kind: ErrTokenInvalid, Body: "Kiro 登录已失效，请重新授权"}
+			return resp, &UpstreamError{Status: http.StatusUnauthorized, Kind: ErrTokenInvalid, Body: "Kiro sign-in has expired. Please reauthorize your account."}
 		}
 		return resp, errRefresh
 	}

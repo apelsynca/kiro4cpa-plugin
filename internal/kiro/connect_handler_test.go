@@ -84,7 +84,7 @@ func TestConnectPageIsServedWithStrictHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp := decodeManagementResponse(t, out)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(resp.Body), "Kiro 登录") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(resp.Body), "Kiro sign in") {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 	if !strings.Contains(resp.Headers.Get("Content-Security-Policy"), "frame-ancestors 'none'") || resp.Headers.Get("Cache-Control") != "no-store" {
