@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -60,8 +61,9 @@ func fetchModelCatalog(c Credential, cfg config.PluginConfig, callbackID string)
 	}
 
 	var lastErr error
+	retry500 := true
 	for idx, att := range attempts {
-		all, err := fetchModelCatalogPages(c, att.region, att.profileArn, headers, callbackID)
+		all, err := fetchModelCatalogPages(c, att.region, att.profileArn, headers, callbackID, &retry500)
 		if err == nil {
 			return all, nil
 		}
@@ -81,21 +83,27 @@ func fetchModelCatalog(c Credential, cfg config.PluginConfig, callbackID string)
 	return nil, lastErr
 }
 
-func fetchModelCatalogPages(c Credential, region, profileArn string, headers map[string][]string, callbackID string) ([]models.UpstreamModel, error) {
+func fetchModelCatalogPages(c Credential, region, profileArn string, headers map[string][]string, callbackID string, retry500 *bool) ([]models.UpstreamModel, error) {
 	var all []models.UpstreamModel
 	nextToken := ""
 	for page := 0; page < maxModelPages; page++ {
-		resp, err := hostHTTPDo(hostapi.HTTPRequest{
+		req := hostapi.HTTPRequest{
 			HostCallbackID: callbackID,
 			Method:         http.MethodGet,
 			URL:            listModelsURLWith(c, region, profileArn, nextToken),
 			Headers:        headers,
-		})
+		}
+		resp, err := hostHTTPDo(req)
+		if err == nil && resp.StatusCode == http.StatusInternalServerError && *retry500 {
+			*retry500 = false
+			log.Printf("kiro4cpa: retrying model listing: %v", modelCatalogHTTPError(region, profileArn != "", resp))
+			resp, err = hostHTTPDo(req)
+		}
 		if err != nil {
-			return nil, err
+			return nil, &modelCatalogError{cause: err, region: region, profileSent: profileArn != ""}
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, classifyUpstream(resp.StatusCode, resp.Body)
+			return nil, modelCatalogHTTPError(region, profileArn != "", resp)
 		}
 		var body struct {
 			Models    []models.UpstreamModel `json:"models"`
@@ -114,6 +122,40 @@ func fetchModelCatalogPages(c Credential, region, profileArn string, headers map
 		nextToken = body.NextToken
 	}
 	return nil, fmt.Errorf("kiro model list exceeded %d pages", maxModelPages)
+}
+
+// Keep upstream details available for classification without logging bodies or URLs.
+type modelCatalogError struct {
+	cause       error
+	status      int
+	region      string
+	profileSent bool
+	requestID   string
+}
+
+func (e *modelCatalogError) Error() string {
+	if e.status == 0 {
+		return fmt.Sprintf("kiro model listing transport failed (region=%s profile_arn_sent=%t)", e.region, e.profileSent)
+	}
+	return fmt.Sprintf("kiro upstream HTTP %d (region=%s profile_arn_sent=%t request_id=%q)", e.status, e.region, e.profileSent, e.requestID)
+}
+
+func (e *modelCatalogError) Unwrap() error { return e.cause }
+
+func modelCatalogHTTPError(region string, profileSent bool, resp *hostapi.HTTPResponse) *modelCatalogError {
+	e := &modelCatalogError{
+		cause: classifyUpstream(resp.StatusCode, resp.Body), status: resp.StatusCode, region: region, profileSent: profileSent,
+	}
+	for name, values := range resp.Headers {
+		switch strings.ToLower(name) {
+		case "x-amzn-requestid", "x-amzn-request-id", "x-amz-request-id":
+			if len(values) != 0 && values[0] != "" {
+				e.requestID = values[0][:min(len(values[0]), 128)]
+				return e
+			}
+		}
+	}
+	return e
 }
 
 type storedCatalog struct {

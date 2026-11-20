@@ -3,7 +3,9 @@ package kiro
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -160,8 +162,13 @@ func callHandler[T any](t *testing.T, method string, req any) T {
 }
 
 func TestAuthRefreshStoresTokenAndCatalog(t *testing.T) {
+	listCalls := 0
 	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
 		if strings.Contains(r.URL, "ListAvailableModels") {
+			listCalls++
+			if listCalls == 1 {
+				return &hostapi.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
+			}
 			return ok(`{"models":[{"modelId":"claude-haiku-4.5","tokenLimits":{"maxInputTokens":200000}},{"modelId":"glm-5"}]}`)
 		}
 		return ok(`{"accessToken":"at2","expiresIn":3600}`)
@@ -198,9 +205,9 @@ func TestAuthRefreshStoresTokenAndCatalog(t *testing.T) {
 }
 
 func TestAuthRefreshKeepsCatalogWhenListingFails(t *testing.T) {
-	stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
 		if strings.Contains(r.URL, "ListAvailableModels") {
-			return &hostapi.HTTPResponse{StatusCode: 503, Body: []byte("down")}, nil
+			return &hostapi.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
 		}
 		return ok(`{"accessToken":"at2","expiresIn":3600}`)
 	})
@@ -210,6 +217,12 @@ func TestAuthRefreshKeepsCatalogWhenListingFails(t *testing.T) {
 	fields, _ := decodeFields(resp.Auth.StorageJSON)
 	if catalog, ok := catalogFrom(fields); !ok || len(catalog) != 1 || catalog[0].ModelID != "auto" {
 		t.Fatalf("catalog %v", catalog)
+	}
+	if resp.Auth.Disabled || fields["accessToken"] != "at2" || fields[catalogKey].(map[string]any)["fetchedAt"] != "x" {
+		t.Fatal("a listing failure should preserve the catalog timestamp and still refresh credentials")
+	}
+	if len(*seen) != 3 || !reflect.DeepEqual((*seen)[1], (*seen)[2]) {
+		t.Fatalf("expected one retry of the same listing request, got %d total requests", len(*seen))
 	}
 }
 
@@ -242,6 +255,50 @@ func TestFetchModelCatalogPaginates(t *testing.T) {
 	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodSocial, AuthRegion: "us-east-1", AccessToken: "at", RefreshToken: "rt"}, config.Get(), "")
 	if err != nil || len(got) != 2 || got[1].ModelID != "glm-5" || len(*seen) != 2 {
 		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
+	}
+}
+
+func TestFetchModelCatalogRetriesFailedPage(t *testing.T) {
+	pageTwoCalls := 0
+	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		if !strings.Contains(r.URL, "nextToken=p2") {
+			return ok(`{"models":[{"modelId":"auto"}],"nextToken":"p2"}`)
+		}
+		pageTwoCalls++
+		if pageTwoCalls == 1 {
+			return &hostapi.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
+		}
+		return ok(`{"models":[{"modelId":"glm-5"}]}`)
+	})
+	got, err := fetchModelCatalog(Credential{AccessToken: "at", ProfileArn: "arn:test"}, config.Get(), "cb-1")
+	if err != nil || len(got) != 2 || got[0].ModelID != "auto" || got[1].ModelID != "glm-5" {
+		t.Fatalf("models=%v err=%v", got, err)
+	}
+	if len(*seen) != 3 || !reflect.DeepEqual((*seen)[1], (*seen)[2]) {
+		t.Fatalf("expected only the second page to be retried, got %d requests", len(*seen))
+	}
+}
+
+func TestFetchModelCatalogSharesRetryBudgetAcrossPages(t *testing.T) {
+	calls := 0
+	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		calls++
+		if calls == 2 {
+			return ok(`{"models":[{"modelId":"auto"}],"nextToken":"p2"}`)
+		}
+		return &hostapi.HTTPResponse{
+			StatusCode: http.StatusInternalServerError,
+			Headers:    map[string][]string{"X-Amzn-RequestId": {"trace-id"}},
+			Body:       []byte("sensitive body"),
+		}, nil
+	})
+	got, err := fetchModelCatalog(Credential{AccessToken: "at", ProfileArn: "arn:test"}, config.Get(), "cb-1")
+	var up *UpstreamError
+	if len(got) != 0 || len(*seen) != 3 || !errors.As(err, &up) || up.Status != http.StatusInternalServerError {
+		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
+	}
+	if want := `kiro upstream HTTP 500 (region=us-east-1 profile_arn_sent=true request_id="trace-id")`; err.Error() != want {
+		t.Fatalf("diagnostic = %q, want %q", err, want)
 	}
 }
 
