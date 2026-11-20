@@ -88,7 +88,7 @@ func TestRefreshSocialRequestAndRotation(t *testing.T) {
 	if r.URL != "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken" || r.HostCallbackID != "cb-1" || string(r.Body) != `{"refreshToken":"rt-test"}` {
 		t.Fatalf("request %+v", r)
 	}
-	if ua := r.Headers["User-Agent"][0]; ua != "KiroIDE-1.4.5-0b57ce32592129d9e832f82147ef2a6cea350b58ca1e0596cfa331778daf69ff" {
+	if ua := r.Headers["User-Agent"][0]; ua != "KiroIDE-"+config.Get().ClientVersion+"-0b57ce32592129d9e832f82147ef2a6cea350b58ca1e0596cfa331778daf69ff" {
 		t.Fatalf("user-agent %s", ua)
 	}
 	if got.AccessToken != "at2" || got.RefreshToken != "rt2" || got.ProfileArn != "arn:keep" || got.ExpiresAt != "2026-10-20T13:00:00Z" {
@@ -245,6 +245,39 @@ func TestModelForAuthFallsBackWithoutCatalog(t *testing.T) {
 	}
 }
 
+func TestAuthRefreshKeepsCatalogsPerAccount(t *testing.T) {
+	stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		if !strings.Contains(r.URL, "/ListAvailableModels?") {
+			return ok(`{"accessToken":"at2","expiresIn":3600}`)
+		}
+		if strings.Contains(r.URL, "%2FX") {
+			return ok(`{"models":[{"modelId":"glm-5"}]}`)
+		}
+		if strings.Contains(r.URL, "%2FY") {
+			return ok(`{"models":[{"modelId":"claude-haiku-4.5"}]}`)
+		}
+		t.Fatalf("unexpected catalog URL: %s", r.URL)
+		return nil, nil
+	})
+	refresh := func(id, storage string) []byte {
+		t.Helper()
+		return callHandler[pluginapi.AuthRefreshResponse](t, pluginabi.MethodAuthRefresh,
+			authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{AuthID: id, StorageJSON: []byte(storage)}}).Auth.StorageJSON
+	}
+	first := refresh("first.json", kiroRsSocial)
+	second := refresh("second.json", strings.Replace(kiroRsSocial, "profile/X", "profile/Y", 1))
+	for _, tc := range []struct {
+		storage []byte
+		want    string
+	}{{first, "glm-5"}, {second, "claude-haiku-4.5"}} {
+		resp := callHandler[pluginapi.ModelResponse](t, pluginabi.MethodModelForAuth,
+			authModelRPC{AuthModelRequest: pluginapi.AuthModelRequest{StorageJSON: tc.storage}})
+		if len(resp.Models) != 1 || resp.Models[0].ID != tc.want {
+			t.Errorf("expected only %s, got %v", tc.want, resp.Models)
+		}
+	}
+}
+
 func TestFetchModelCatalogPaginates(t *testing.T) {
 	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
 		if strings.Contains(r.URL, "nextToken=p2") {
@@ -269,7 +302,9 @@ func TestFetchModelCatalogResolvesMissingIDCProfile(t *testing.T) {
 		}
 		return ok(`{"models":[{"modelId":"live-model"}]}`)
 	})
-	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodIDC, AccessToken: "at", ProfileArn: builderIDPlaceholderARN}, config.Get(), "cb-1")
+	cfg := config.Get()
+	cfg.ClientVersion = "9.8.7"
+	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodIDC, AccessToken: "at", ProfileArn: builderIDPlaceholderARN}, cfg, "cb-1")
 	if err != nil || len(got) != 1 || got[0].ModelID != "live-model" || len(*seen) != 3 {
 		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
 	}
@@ -286,6 +321,11 @@ func TestFetchModelCatalogResolvesMissingIDCProfile(t *testing.T) {
 	}
 	ids := map[string]bool{}
 	for _, req := range *seen {
+		for _, name := range []string{"user-agent", "x-amz-user-agent"} {
+			if !strings.Contains(firstNonEmpty(req.Headers[name]...), "KiroIDE-9.8.7-") {
+				t.Errorf("%s %s: %s does not advertise configured client version", req.Method, req.URL, name)
+			}
+		}
 		h := http.Header(req.Headers)
 		id := firstNonEmpty(req.Headers["amz-sdk-invocation-id"]...)
 		if id == "" || ids[id] || firstNonEmpty(req.Headers["amz-sdk-request"]...) != "attempt=1; max=1" ||

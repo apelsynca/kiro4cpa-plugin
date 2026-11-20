@@ -262,8 +262,10 @@ func handleAuthRefresh(request []byte) ([]byte, error) {
 			log.Printf("kiro4cpa: fetched live model catalogue for %s (%d models)", req.AuthID, len(catalog))
 		}
 		fields = withCatalog(fields, catalog, now)
-	} else {
+	} else if _, hadCatalog := catalogFrom(fields); hadCatalog {
 		log.Printf("kiro4cpa: listing models for %s failed, keeping stored catalogue: %v", req.AuthID, errList)
+	} else {
+		log.Printf("kiro4cpa: listing models for %s failed, using default catalogue: %v", req.AuthID, errList)
 	}
 	// Older builds treated a catalogue-only 403 as an account suspension.
 	// Clear that warning without changing the user's enable/disable setting.

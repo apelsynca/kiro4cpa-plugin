@@ -16,7 +16,7 @@ var regionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
 const (
 	socialPlaceholderARN    = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
 	builderIDPlaceholderARN = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
-	usageAPIClientVersion   = "0.9.2"
+	usageAPIClientVersion   = "1.4.236"
 )
 
 func effectiveProfileARN(c Credential) string {
@@ -102,12 +102,16 @@ func streamHeaders(c Credential, cfg config.PluginConfig) map[string][]string {
 }
 
 func runtimeHeaders(c Credential, cfg config.PluginConfig) map[string][]string {
+	return runtimeHeadersWithVersion(c, cfg, usageAPIClientVersion)
+}
+
+func runtimeHeadersWithVersion(c Credential, cfg config.PluginConfig, clientVersion string) map[string][]string {
 	mid := machineID(c)
 	h := map[string][]string{
 		"Authorization":    {"Bearer " + c.bearerToken()},
-		"x-amz-user-agent": {fmt.Sprintf("aws-sdk-js/1.0.0 KiroIDE-%s-%s", usageAPIClientVersion, mid)},
+		"x-amz-user-agent": {fmt.Sprintf("aws-sdk-js/1.0.0 KiroIDE-%s-%s", clientVersion, mid)},
 		"user-agent": {fmt.Sprintf("aws-sdk-js/1.0.0 ua/2.1 os/%s lang/js md/nodejs#%s api/codewhispererruntime#1.0.0 m/N,E KiroIDE-%s-%s",
-			cfg.OSVersion, cfg.NodeVersion, usageAPIClientVersion, mid)},
+			cfg.OSVersion, cfg.NodeVersion, clientVersion, mid)},
 	}
 	if t := tokenType(c); t != "" {
 		h["tokentype"] = []string{t}

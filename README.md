@@ -70,7 +70,7 @@ Download `kiro4cpa_<version>_<os>_<arch>.zip` for your platform from [Releases](
          enabled: true
          # Optional settings with their default values:
          # default_region: us-east-1   # Used when neither apiRegion nor profileArn specifies a region
-         # client_version: 1.4.5      # Kiro IDE version reported in the User-Agent
+          # client_version: 1.4.236    # Kiro IDE version reported in the User-Agent
          # os_version: darwin#24.6.0
          # node_version: 22.22.0
          # min_token_interval: 1s

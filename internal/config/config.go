@@ -23,7 +23,7 @@ type PluginConfig struct {
 var defaults = PluginConfig{
 	Enabled:          true,
 	DefaultRegion:    "us-east-1",
-	ClientVersion:    "1.4.5",
+	ClientVersion:    "1.4.236",
 	OSVersion:        "darwin#24.6.0",
 	NodeVersion:      "22.22.0",
 	MinTokenInterval: "1s",

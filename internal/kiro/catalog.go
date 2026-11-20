@@ -46,7 +46,7 @@ func handleModelForAuth(request []byte) ([]byte, error) {
 }
 
 func fetchModelCatalog(c Credential, cfg config.PluginConfig, callbackID string) ([]models.UpstreamModel, error) {
-	headers := runtimeHeaders(c, cfg)
+	headers := runtimeHeadersWithVersion(c, cfg, cfg.ClientVersion)
 	regions := restRegionCandidates(c)
 	profileARN := effectiveProfileARN(c)
 	if profileARN == "" && (c.AuthMethod == AuthMethodIDC || c.AuthMethod == AuthMethodExternalIDP) {

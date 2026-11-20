@@ -104,6 +104,29 @@ func TestQuotaFetchRetriesWithoutProfileARN(t *testing.T) {
 	}
 }
 
+func TestQuotaFetchFallsBackToManagementForBuilderID(t *testing.T) {
+	const managementURL = "https://management.us-east-1.kiro.dev/Get-Usage-Limits?isEmailRequired=false&origin=KIRO_CLI&resourceType=CREDIT"
+	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		if r.URL == managementURL {
+			return ok(usageLimitsBody)
+		}
+		return &hostapi.HTTPResponse{StatusCode: 400, Body: []byte(`{"message":"Invalid profileArn."}`)}, nil
+	})
+	req := quotaRequest()
+	req.StorageJSON = []byte(`{"authMethod":"idc","accessToken":"at","refreshToken":"rt","clientId":"client","clientSecret":"secret"}`)
+	resp := callHandler[pluginapi.QuotaFetchResponse](t, pluginabi.MethodQuotaFetch, req)
+	if len(*seen) != 2 || strings.Contains((*seen)[0].URL, "profileArn") {
+		t.Fatalf("expected an ARN-free legacy request followed by one fallback, got %d requests", len(*seen))
+	}
+	r := (*seen)[1]
+	if r.URL != managementURL || r.Method != "GET" || r.HostCallbackID != "cb-q" || r.Headers["Authorization"][0] != "Bearer at" {
+		t.Fatalf("unexpected management quota request: %+v", r)
+	}
+	if resp.Subscription == nil || resp.Subscription.Plan != "KIRO FREE" || len(resp.Summary) != 2 {
+		t.Fatalf("quota response %+v", resp)
+	}
+}
+
 func TestQuotaDescribeAndRegistration(t *testing.T) {
 	d := callHandler[pluginapi.QuotaDescribeResponse](t, pluginabi.MethodQuotaDescribe, map[string]any{})
 	if len(d.SupportedProviders) != 1 || d.SupportedProviders[0] != "kiro4cpa" || d.DisplayName != "Kiro" {

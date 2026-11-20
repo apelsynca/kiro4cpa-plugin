@@ -99,7 +99,7 @@ func TestHeadersTokenTypeAndBearer(t *testing.T) {
 	if _, ok := social["tokentype"]; ok || social["Authorization"][0] != "Bearer at" {
 		t.Fatalf("social headers %v", social)
 	}
-	if !strings.HasSuffix(social["user-agent"][0], "KiroIDE-1.4.5-0b57ce32592129d9e832f82147ef2a6cea350b58ca1e0596cfa331778daf69ff") {
+	if !strings.HasSuffix(social["user-agent"][0], "KiroIDE-"+cfg.ClientVersion+"-0b57ce32592129d9e832f82147ef2a6cea350b58ca1e0596cfa331778daf69ff") {
 		t.Fatalf("user-agent %s", social["user-agent"][0])
 	}
 }
