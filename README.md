@@ -12,12 +12,12 @@ Reference baseline checked on 2026-11-15: `ZyphrZero/kiro.rs` v0.9.9, commit `7d
 - Supported credential types: Social (Google or GitHub), IdC (Builder ID or IAM Identity Center), External IdP (such as Entra ID), and API Key.
 - After sign-in, the plugin looks up the account email and uses it in the credential filename. Signing in again with the same account and method overwrites the existing file instead of creating a duplicate.
 - Access tokens refresh automatically. If a request encounters an invalid token, the plugin forces one refresh and retries the request. Refreshed credentials are written back to the same file.
-- During refresh, the plugin fetches and caches the account's available models. If the lookup fails, it falls back to a built-in list.
+- Registers a bundled model list per account based on its Kiro plan, including Student.
 - Supports streaming and non-streaming responses, extended thinking, tools, and JPEG, PNG, GIF, and WebP images.
 - Reports Kiro usage through CPA's QuotaProvider. Only active free-trial and bonus credits count toward available quota.
 - The global `oauth-excluded-models` list applies to every account. Each account can add its own exclusions.
 - Handles upstream errors by status code: CPA handles cooldown and failover for 401, 402, 403, and 429; upstream 5xx errors are reported as retryable 502s.
-- Paces requests per credential and remembers monthly quota exhaustion and account suspensions reported by Kiro to avoid repeated upstream calls. A model-listing 403 does not disable the account; request-time suspension responses trigger a temporary cooldown instead.
+- Paces requests per credential and remembers monthly quota exhaustion and account suspensions reported by Kiro to avoid repeated upstream calls. Request-time suspension responses trigger a temporary cooldown.
 
 The plugin implements only the Claude Messages executor. CPA handles conversion to and from OpenAI formats.
 
@@ -100,12 +100,16 @@ Signing in or importing credentials through [Web sign-in](#web-sign-in) is usual
 | `external_idp` (also accepts `azuread`, `entra`) | `refreshToken`, `clientId`, `tokenEndpoint` (HTTPS) |
 | `api_key` | `kiroApiKey` |
 
-Optional fields: `accessToken`, `expiresAt`, `profileArn`, `authRegion`, `apiRegion`, `machineId`, `email`. Without `accessToken`, CPA refreshes the credential once immediately after loading it.
+Optional fields: `accessToken`, `expiresAt`, `profileArn`, `authRegion`, `apiRegion`, `machineId`, `email`, `subscriptionTitle`. Without `accessToken`, CPA refreshes the credential once immediately after loading it.
 
 - kiro.rs stores its `credentials.json` as an array, which CPA does not support. Save each element as its own file and add the `type` field.
-- Refreshed tokens and the model list are written back to the same file. Treat this file like an account password: restrict its permissions and never commit it.
+- Refreshed tokens are written back to the same file. Treat this file like an account password: restrict its permissions and never commit it.
 
 ## Models
+
+The plugin bundles a static catalog based on [Kiro's public model matrix](https://kiro.dev/docs/models/#quick-comparison). It does not call `ListAvailableModels`. Free and unknown plans use the Free catalog; Pro, Pro+, Pro Max, and Power use the premium catalog. The [Kiro Students plan](https://kiro.dev/blog/students-2026/) has premium access but no published model-by-model list, so `KIRO STUDENT` or `KIRO STUDENTS` uses the premium catalog as an approximation. Regional or account restrictions can still apply; listed models are not a guarantee of access.
+
+On sign-in, the plugin saves `subscriptionTitle` if Kiro returns it with account information. If a saved credential has no title or it is out of date, set `subscriptionTitle` in that account's CPA auth JSON to its actual plan (for example, `KIRO STUDENT`).
 
 `/v1/models` lists Kiro's model IDs, such as `claude-sonnet-4.5`, `claude-haiku-4.5`, and `auto`. To use a different name, configure a CPA `oauth-model-alias` under the `kiro4cpa` channel:
 

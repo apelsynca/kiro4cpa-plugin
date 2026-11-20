@@ -55,16 +55,6 @@ func TestGenerateURLRegion(t *testing.T) {
 	}
 }
 
-func TestListModelsURL(t *testing.T) {
-	got := listModelsURL(Credential{AuthRegion: "eu-west-1", ProfileArn: "arn:a/b"}, "tok")
-	if got != "https://q.eu-central-1.amazonaws.com/ListAvailableModels?nextToken=tok&origin=AI_EDITOR&profileArn=arn%3Aa%2Fb" {
-		t.Fatalf("got %s", got)
-	}
-	if got := listModelsURL(Credential{AuthRegion: "ap-southeast-1"}, ""); got != "https://q.us-east-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR" {
-		t.Fatalf("got %s", got)
-	}
-}
-
 func TestEffectiveProfileARN(t *testing.T) {
 	if got := effectiveProfileARN(Credential{ProfileArn: builderIDPlaceholderARN}); got != "" {
 		t.Fatalf("expected empty for builderIDPlaceholderARN, got %q", got)

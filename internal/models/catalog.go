@@ -16,7 +16,7 @@ const (
 	MaxThinkingBudget = 24576
 )
 
-// UpstreamModel is one entry of Kiro's ListAvailableModels response.
+// UpstreamModel describes a Kiro model as published to CPA.
 type UpstreamModel struct {
 	ModelID             string       `json:"modelId"`
 	ModelName           string       `json:"modelName,omitempty"`
@@ -30,21 +30,56 @@ type TokenLimits struct {
 	MaxOutputTokens int64 `json:"maxOutputTokens,omitempty"`
 }
 
-// FallbackModels is what a KIRO FREE account listed on 2026-10-20. It is served
-// only for credentials whose live catalogue has never been fetched.
-var FallbackModels = []UpstreamModel{
+// Commercial catalog snapshot: https://kiro.dev/docs/models/#quick-comparison
+// Last checked 2026-11-20. Excludes the already retired Claude Sonnet 4.0.
+var freeModels = []UpstreamModel{
 	{ModelID: "auto"},
 	{ModelID: "claude-sonnet-4.5"},
-	{ModelID: "claude-haiku-4.5"},
-	{ModelID: "deepseek-3.2"},
+	withContext("deepseek-3.2", 128_000),
 	{ModelID: "minimax-m2.5"},
-	{ModelID: "minimax-m2.1"},
 	{ModelID: "glm-5"},
-	{ModelID: "qwen3-coder-next"},
+	{ModelID: "minimax-m2.1"},
+	withContext("qwen3-coder-next", 256_000),
+}
+
+var premiumModels = []UpstreamModel{
+	withContext("gpt-5.6-sol", 1_000_000),
+	withContext("gpt-5.6-terra", 1_000_000),
+	withContext("gpt-5.6-luna", 1_000_000),
+	withContext("claude-opus-5.5", 1_000_000),
+	withContext("claude-sonnet-5.5", 1_000_000),
+	withContext("claude-haiku-5.5", 1_000_000),
+	withContext("claude-opus-5", 1_000_000),
+	withContext("claude-opus-4.8", 1_000_000),
+	withContext("claude-opus-4.7", 1_000_000),
+	withContext("claude-opus-4.6", 1_000_000),
+	{ModelID: "claude-opus-4.5"},
+	withContext("claude-sonnet-5", 1_000_000),
+	withContext("claude-sonnet-4.6", 1_000_000),
+	{ModelID: "claude-haiku-4.5"},
+	withContext("grok-4.7", 500_000),
+	withContext("kimi-k3", 1_000_000),
+}
+
+func withContext(id string, tokens int64) UpstreamModel {
+	return UpstreamModel{ModelID: id, TokenLimits: &TokenLimits{MaxInputTokens: tokens}}
 }
 
 func GetDefaultModelInfos() []pluginapi.ModelInfo {
-	return ToModelInfos(FallbackModels)
+	return ToModelInfos(freeModels)
+}
+
+func GetModelInfosForPlan(plan string) []pluginapi.ModelInfo {
+	plan = strings.Join(strings.Fields(strings.ToLower(plan)), " ")
+	plan = strings.TrimPrefix(plan, "kiro ")
+	infos := GetDefaultModelInfos()
+	switch plan {
+	case "pro", "pro+", "pro plus", "pro max", "power", "student", "students":
+		// Kiro confirms Students get premium models but does not publish a
+		// separate roster. Use the commercial premium list as a starting point.
+		infos = append(infos, ToModelInfos(premiumModels)...)
+	}
+	return infos
 }
 
 // ToModelInfos publishes Kiro's own model IDs only; client spellings such as

@@ -9,20 +9,16 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
-const blockedBody = `{"message":"User is not authorized to make this call.","reason":null}`
-
-// refreshWith runs auth.refresh with the token refresh succeeding and the
-// model listing answered by listing.
-func refreshWith(t *testing.T, storage string, listing func() (*hostapi.HTTPResponse, error)) (pluginapi.AuthRefreshResponse, map[string]any) {
+func refreshAccount(t *testing.T, storage string, metadata map[string]any) (pluginapi.AuthRefreshResponse, map[string]any) {
 	t.Helper()
 	stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if strings.Contains(r.URL, "/refreshToken") {
-			return ok(`{"accessToken":"at2","expiresIn":3600}`)
+		if !strings.HasSuffix(r.URL, "/refreshToken") {
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL)
 		}
-		return listing()
+		return ok(`{"accessToken":"at2","expiresIn":3600}`)
 	})
 	resp := callHandler[pluginapi.AuthRefreshResponse](t, pluginabi.MethodAuthRefresh,
-		authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{AuthID: "k.json", AuthProvider: "kiro4cpa", StorageJSON: []byte(storage)}})
+		authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{AuthID: "k.json", AuthProvider: "kiro4cpa", StorageJSON: []byte(storage), Metadata: metadata}})
 	fields, err := decodeFields(resp.Auth.StorageJSON)
 	if err != nil {
 		t.Fatal(err)
@@ -30,52 +26,21 @@ func refreshWith(t *testing.T, storage string, listing func() (*hostapi.HTTPResp
 	return resp, fields
 }
 
-func TestRefreshKeepsAccountEnabledWhenKiroRejectsListing(t *testing.T) {
-	resp, fields := refreshWith(t, kiroRsSocial, func() (*hostapi.HTTPResponse, error) {
-		return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(blockedBody)}, nil
-	})
-	if resp.Auth.Disabled || resp.Auth.Metadata["disabled"] == true || resp.Auth.Metadata["note"] != nil {
-		t.Fatalf("auth %+v", resp.Auth)
+func TestRefreshPreservesAccountControls(t *testing.T) {
+	storage := strings.Replace(kiroRsSocial, `{`, `{"note":"Primary account","excluded_models":["auto"],`, 1)
+	resp, fields := refreshAccount(t, storage, map[string]any{"disabled": true, "note": "Panel note"})
+	if !resp.Auth.Disabled || resp.Auth.Metadata["disabled"] != true || resp.Auth.Metadata["note"] != "Panel note" {
+		t.Fatalf("host account controls lost: disabled=%v metadata=%v", resp.Auth.Disabled, resp.Auth.Metadata)
 	}
-	if fields["disabled"] == true || fields["note"] != nil || fields[blockedAtKey] != nil {
-		t.Fatalf("stored fields %v", fields)
-	}
-}
-
-func TestRefreshKeepsUserNoteWhenBlocking(t *testing.T) {
-	storage := strings.Replace(kiroRsSocial, `{`, `{"note":"Primary account",`, 1)
-	resp, fields := refreshWith(t, storage, func() (*hostapi.HTTPResponse, error) {
-		return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(blockedBody)}, nil
-	})
-	if resp.Auth.Disabled || fields["note"] != "Primary account" {
-		t.Fatalf("disabled %v note %v", resp.Auth.Disabled, fields["note"])
+	excluded, _ := fields["excluded_models"].([]any)
+	if fields["note"] != "Primary account" || len(excluded) != 1 || excluded[0] != "auto" {
+		t.Fatalf("stored account controls lost: note=%v exclusions=%v", fields["note"], excluded)
 	}
 }
 
-func TestRefreshDoesNotDisableOnOtherFailures(t *testing.T) {
-	for name, listing := range map[string]func() (*hostapi.HTTPResponse, error){
-		"bad bearer": func() (*hostapi.HTTPResponse, error) {
-			return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(`{"message":"The bearer token included in the request is invalid."}`)}, nil
-		},
-		"other 403": func() (*hostapi.HTTPResponse, error) {
-			return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(`{"message":"Invalid profileArn."}`)}, nil
-		},
-		"server error": func() (*hostapi.HTTPResponse, error) {
-			return &hostapi.HTTPResponse{StatusCode: 503, Body: []byte(`down`)}, nil
-		},
-	} {
-		resp, fields := refreshWith(t, kiroRsSocial, listing)
-		if resp.Auth.Disabled || fields["note"] != nil {
-			t.Fatalf("%s: disabled %v note %v", name, resp.Auth.Disabled, fields["note"])
-		}
-	}
-}
-
-func TestRefreshClearsLegacyBlockedNoteEvenIfListingFails(t *testing.T) {
+func TestRefreshClearsLegacyBlockedNote(t *testing.T) {
 	storage := strings.Replace(kiroRsSocial, `{`, `{"note":"`+blockedNote+`","`+blockedAtKey+`":"2026-10-24T00:00:00Z",`, 1)
-	resp, fields := refreshWith(t, storage, func() (*hostapi.HTTPResponse, error) {
-		return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(blockedBody)}, nil
-	})
+	resp, fields := refreshAccount(t, storage, nil)
 	if fields["note"] != "" || fields[blockedAtKey] != nil || resp.Auth.Metadata["note"] != "" {
 		t.Fatalf("note %v blockedAt %v meta %v", fields["note"], fields[blockedAtKey], resp.Auth.Metadata["note"])
 	}
@@ -83,9 +48,7 @@ func TestRefreshClearsLegacyBlockedNoteEvenIfListingFails(t *testing.T) {
 
 func TestRefreshDoesNotReenableDisabledAccount(t *testing.T) {
 	storage := strings.Replace(kiroRsSocial, `"disabled":false`, `"disabled":true,"note":"`+blockedNote+`","`+blockedAtKey+`":"2026-10-24T00:00:00Z"`, 1)
-	resp, fields := refreshWith(t, storage, func() (*hostapi.HTTPResponse, error) {
-		return ok(`{"models":[{"modelId":"auto"}]}`)
-	})
+	resp, fields := refreshAccount(t, storage, nil)
 	if !resp.Auth.Disabled || fields["disabled"] != true || fields["note"] != "" {
 		t.Fatalf("disabled=%v persisted=%v note=%v", resp.Auth.Disabled, fields["disabled"], fields["note"])
 	}

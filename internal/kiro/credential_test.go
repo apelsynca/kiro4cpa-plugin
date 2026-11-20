@@ -89,13 +89,25 @@ func parseRequest(t *testing.T, provider, raw string) pluginapi.AuthParseRespons
 	return resp
 }
 
-func TestAuthParseSchedulesImmediateRefreshWithoutCatalog(t *testing.T) {
-	resp := parseRequest(t, "kiro4cpa", kiroRsSocial)
+func TestAuthParseSchedulesRefreshFromTokenExpiry(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	storage := strings.Replace(kiroRsSocial, "2026-10-20T13:26:29.054870450+00:00", expiresAt.Format(time.RFC3339), 1)
+	resp := parseRequest(t, "kiro4cpa", storage)
 	if !resp.Handled || resp.Auth.Label != "a@b.c (Social)" || resp.Auth.Metadata["email"] != "a@b.c" || resp.Auth.Metadata[refreshIntervalKey] != float64(refreshIntervalSeconds) {
 		t.Fatalf("got %+v", resp)
 	}
-	if resp.Auth.NextRefreshAfter.After(time.Now()) {
-		t.Fatalf("expected immediate refresh, got %v", resp.Auth.NextRefreshAfter)
+	if want := expiresAt.Add(-refreshLead); !resp.Auth.NextRefreshAfter.Equal(want) {
+		t.Fatalf("next refresh = %v, want %v", resp.Auth.NextRefreshAfter, want)
+	}
+}
+
+func TestAuthParseSchedulesImmediateRefreshWithoutAccessToken(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	storage := `{"refreshToken":"rt","expiresAt":"` + expiresAt + `",` + legacyCatalogField + `}`
+	before := time.Now()
+	resp := parseRequest(t, "kiro4cpa", storage)
+	if next := resp.Auth.NextRefreshAfter; !resp.Handled || next.Before(before) || next.After(time.Now()) {
+		t.Fatalf("expected immediate refresh, got handled=%v next=%v", resp.Handled, next)
 	}
 }
 
@@ -130,7 +142,7 @@ func TestIdentityProviderStoredAsKiroProvider(t *testing.T) {
 // CPA re-parses a file after each refresh write and takes NextRefreshAfter from
 // the parse for a disabled credential. An immediate time there looped refreshes.
 func TestAuthParseDoesNotRefreshDisabledCredentialAtOnce(t *testing.T) {
-	disabled := strings.Replace(kiroRsSocial, `"disabled":false`, `"disabled":true`, 1)
+	disabled := `{"refreshToken":"rt","disabled":true,` + legacyCatalogField + `}`
 	resp := parseRequest(t, "kiro4cpa", disabled)
 	if wait := time.Until(resp.Auth.NextRefreshAfter); wait < 23*time.Hour {
 		t.Fatalf("disabled credential refreshes in %v", wait)

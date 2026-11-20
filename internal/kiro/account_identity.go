@@ -18,6 +18,9 @@ import (
 const accountKeyLength = 12
 
 type usageUserInfo struct {
+	SubscriptionInfo *struct {
+		Title string `json:"subscriptionTitle"`
+	} `json:"subscriptionInfo"`
 	UserInfo *struct {
 		Email  string `json:"email"`
 		UserID string `json:"userId"`
@@ -49,7 +52,13 @@ func resolveAccountIdentity(c Credential, cfg config.PluginConfig, now time.Time
 			continue
 		}
 		var body usageUserInfo
-		if json.Unmarshal(resp.Body, &body) != nil || body.UserInfo == nil {
+		if json.Unmarshal(resp.Body, &body) != nil {
+			continue
+		}
+		if body.SubscriptionInfo != nil {
+			c.SubscriptionTitle = firstNonEmpty(c.SubscriptionTitle, body.SubscriptionInfo.Title)
+		}
+		if body.UserInfo == nil {
 			continue
 		}
 		c.Email = firstNonEmpty(c.Email, body.UserInfo.Email)

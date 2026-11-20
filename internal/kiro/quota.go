@@ -96,7 +96,8 @@ func handleQuotaFetch(request []byte) ([]byte, error) {
 	return wire.OK(quotaResponse(limits)), nil
 }
 
-// fetchUsageLimits tries each region, with and without the profile ARN.
+// fetchUsageLimits tries each region, with and without the profile ARN, and
+// returns the first successful getUsageLimits body.
 func fetchUsageLimits(cred Credential, cfg config.PluginConfig, callbackID string) ([]byte, error) {
 	headers := runtimeHeaders(cred, cfg)
 	regions := restRegionCandidates(cred)
@@ -137,31 +138,9 @@ func fetchUsageLimits(cred Credential, cfg config.PluginConfig, callbackID strin
 			return nil, up
 		}
 		bodyStr := string(resp.Body)
-		invalidProfile := resp.StatusCode == http.StatusBadRequest && strings.Contains(bodyStr, "Invalid profileArn")
-		if invalidProfile && att.profileArn == "" && effectiveProfileARN(cred) == "" && cred.AuthMethod == AuthMethodIDC {
-			// Try the management API's account-level request before switching regions.
-			usage, err := hostHTTPDo(hostapi.HTTPRequest{
-				HostCallbackID: callbackID,
-				Method:         http.MethodGet,
-				URL:            fmt.Sprintf("https://management.%s.kiro.dev/Get-Usage-Limits?isEmailRequired=false&origin=KIRO_CLI&resourceType=CREDIT", att.region),
-				Headers: map[string][]string{
-					"Accept":        {"application/json"},
-					"Authorization": headers["Authorization"],
-				},
-			})
-			if err == nil {
-				if usage.StatusCode == http.StatusOK {
-					var limits usageLimits
-					if json.Unmarshal(usage.Body, &limits) == nil && len(limits.UsageBreakdownList) > 0 {
-						return usage.Body, nil
-					}
-				} else if up := classifyUpstream(usage.StatusCode, usage.Body); up.Kind == ErrTokenInvalid {
-					return nil, up
-				}
-			}
-		}
 		shouldRetry := resp.StatusCode == http.StatusForbidden ||
-			invalidProfile || (resp.StatusCode == http.StatusBadRequest && strings.Contains(bodyStr, "Improperly formed request"))
+			(resp.StatusCode == http.StatusBadRequest &&
+				(strings.Contains(bodyStr, "Invalid profileArn") || strings.Contains(bodyStr, "Improperly formed request")))
 
 		if shouldRetry && idx+1 < len(attempts) {
 			continue

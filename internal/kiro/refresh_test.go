@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/AkkunYo/kiro4cpa-plugin/internal/config"
 	"github.com/AkkunYo/kiro4cpa-plugin/internal/hostapi"
-	"github.com/AkkunYo/kiro4cpa-plugin/internal/models"
 	"github.com/AkkunYo/kiro4cpa-plugin/internal/wire"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -161,68 +159,46 @@ func callHandler[T any](t *testing.T, method string, req any) T {
 	return resp
 }
 
-func TestAuthRefreshStoresTokenAndCatalog(t *testing.T) {
-	listCalls := 0
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if strings.Contains(r.URL, "ListAvailableModels") {
-			listCalls++
-			if listCalls == 1 {
-				return &hostapi.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
+const legacyCatalogField = `"kiro4cpa_models":{"fetchedAt":"2026-10-20T12:00:00Z","models":[{"modelId":"legacy-only-model"}]}`
+
+func TestAuthRefreshOnlyRequestsTokenAndRemovesLegacyCatalog(t *testing.T) {
+	for _, tc := range []struct {
+		name, storage, tokenURL string
+	}{
+		{"social", kiroRsSocial, "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"},
+		{"builder ID without profile", `{"authMethod":"builder-id","authRegion":"us-east-1","refreshToken":"rt","clientId":"cid","clientSecret":"sec","subscriptionTitle":"KIRO FREE"}`, "https://oidc.us-east-1.amazonaws.com/token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+				if r.Method != http.MethodPost || r.URL != tc.tokenURL || r.HostCallbackID != "cb-9" {
+					t.Fatalf("unexpected upstream request: %s %s (callback %q)", r.Method, r.URL, r.HostCallbackID)
+				}
+				return ok(`{"accessToken":"at2","refreshToken":"rt2","expiresIn":3600}`)
+			})
+			storage := strings.Replace(tc.storage, `{`, `{`+legacyCatalogField+`,`, 1)
+			req := authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{AuthID: "kiro.json", StorageJSON: []byte(storage),
+				Metadata: map[string]any{"email": "a@b.c", "priority": 5.0}}, HostCallbackID: "cb-9"}
+			resp := callHandler[pluginapi.AuthRefreshResponse](t, pluginabi.MethodAuthRefresh, req)
+			if len(*seen) != 1 {
+				t.Fatalf("upstream requests = %d, want only the token refresh", len(*seen))
 			}
-			return ok(`{"models":[{"modelId":"claude-haiku-4.5","tokenLimits":{"maxInputTokens":200000}},{"modelId":"glm-5"}]}`)
-		}
-		return ok(`{"accessToken":"at2","expiresIn":3600}`)
-	})
-	req := authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{AuthID: "kiro.json", StorageJSON: []byte(kiroRsSocial),
-		Metadata: map[string]any{"email": "a@b.c", "priority": 5.0}}, HostCallbackID: "cb-9"}
-	resp := callHandler[pluginapi.AuthRefreshResponse](t, pluginabi.MethodAuthRefresh, req)
-
-	var stored map[string]any
-	_ = json.Unmarshal(resp.Auth.StorageJSON, &stored)
-	if stored["accessToken"] != "at2" || stored["subscriptionTitle"] != "KIRO FREE" || stored[catalogKey] == nil {
-		t.Fatalf("stored %v", stored)
-	}
-	if resp.Auth.Metadata["priority"] != 5.0 || resp.Auth.Metadata[refreshIntervalKey] != float64(refreshIntervalSeconds) || resp.Auth.Disabled {
-		t.Fatalf("host metadata lost: %+v", resp.Auth)
-	}
-	if d := time.Until(resp.NextRefreshAfter); d < 45*time.Minute || d > 55*time.Minute {
-		t.Fatalf("next refresh in %v", d)
-	}
-	list := (*seen)[1]
-	if list.HostCallbackID != "cb-9" || !strings.Contains(list.URL, "profileArn=arn%3Aaws%3Acodewhisperer%3Aus-east-1%3A111%3Aprofile%2FX") {
-		t.Fatalf("list request %+v", list)
-	}
-
-	forAuth := callHandler[pluginapi.ModelResponse](t, pluginabi.MethodModelForAuth,
-		authModelRPC{AuthModelRequest: pluginapi.AuthModelRequest{StorageJSON: resp.Auth.StorageJSON}})
-	ids := map[string]bool{}
-	for _, m := range forAuth.Models {
-		ids[m.ID] = true
-	}
-	if len(ids) != 2 || !ids["claude-haiku-4.5"] || !ids["glm-5"] {
-		t.Fatalf("model ids %v", ids)
-	}
-}
-
-func TestAuthRefreshKeepsCatalogWhenListingFails(t *testing.T) {
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if strings.Contains(r.URL, "ListAvailableModels") {
-			return &hostapi.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
-		}
-		return ok(`{"accessToken":"at2","expiresIn":3600}`)
-	})
-	withOld := strings.Replace(kiroRsSocial, `"id":1,`, `"id":1,"kiro4cpa_models":{"fetchedAt":"x","models":[{"modelId":"auto"}]},`, 1)
-	resp := callHandler[pluginapi.AuthRefreshResponse](t, pluginabi.MethodAuthRefresh,
-		authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{StorageJSON: []byte(withOld)}})
-	fields, _ := decodeFields(resp.Auth.StorageJSON)
-	if catalog, ok := catalogFrom(fields); !ok || len(catalog) != 1 || catalog[0].ModelID != "auto" {
-		t.Fatalf("catalog %v", catalog)
-	}
-	if resp.Auth.Disabled || fields["accessToken"] != "at2" || fields[catalogKey].(map[string]any)["fetchedAt"] != "x" {
-		t.Fatal("a listing failure should preserve the catalog timestamp and still refresh credentials")
-	}
-	if len(*seen) != 3 || !reflect.DeepEqual((*seen)[1], (*seen)[2]) {
-		t.Fatalf("expected one retry of the same listing request, got %d total requests", len(*seen))
+			stored, err := decodeFields(resp.Auth.StorageJSON)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored["accessToken"] != "at2" || stored["refreshToken"] != "rt2" || stored["subscriptionTitle"] != "KIRO FREE" {
+				t.Fatalf("stored fields %v", stored)
+			}
+			if _, ok := stored[catalogKey]; ok {
+				t.Fatal("refresh retained the legacy catalog")
+			}
+			if resp.Auth.Metadata["email"] != "a@b.c" || resp.Auth.Metadata["priority"] != 5.0 || resp.Auth.Metadata[refreshIntervalKey] != float64(refreshIntervalSeconds) || resp.Auth.Disabled {
+				t.Fatalf("host metadata or account status lost: %+v", resp.Auth)
+			}
+			if d := time.Until(resp.NextRefreshAfter); d < 45*time.Minute || d > 55*time.Minute {
+				t.Fatalf("next refresh in %v", d)
+			}
+		})
 	}
 }
 
@@ -234,175 +210,6 @@ func TestAuthRefreshInvalidGrantDisables(t *testing.T) {
 		authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{StorageJSON: []byte(kiroRsSocial)}})
 	if !resp.Auth.Disabled || resp.Auth.Metadata["disabled"] != true || time.Until(resp.NextRefreshAfter) < time.Hour {
 		t.Fatalf("got %+v", resp)
-	}
-}
-
-func TestModelForAuthFallsBackWithoutCatalog(t *testing.T) {
-	resp := callHandler[pluginapi.ModelResponse](t, pluginabi.MethodModelForAuth,
-		authModelRPC{AuthModelRequest: pluginapi.AuthModelRequest{StorageJSON: []byte(kiroRsSocial)}})
-	if len(resp.Models) != len(models.FallbackModels) || resp.Models[0].ID != "auto" {
-		t.Fatalf("want the %d fallback models, got %d", len(models.FallbackModels), len(resp.Models))
-	}
-}
-
-func TestAuthRefreshKeepsCatalogsPerAccount(t *testing.T) {
-	stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if !strings.Contains(r.URL, "/ListAvailableModels?") {
-			return ok(`{"accessToken":"at2","expiresIn":3600}`)
-		}
-		if strings.Contains(r.URL, "%2FX") {
-			return ok(`{"models":[{"modelId":"glm-5"}]}`)
-		}
-		if strings.Contains(r.URL, "%2FY") {
-			return ok(`{"models":[{"modelId":"claude-haiku-4.5"}]}`)
-		}
-		t.Fatalf("unexpected catalog URL: %s", r.URL)
-		return nil, nil
-	})
-	refresh := func(id, storage string) []byte {
-		t.Helper()
-		return callHandler[pluginapi.AuthRefreshResponse](t, pluginabi.MethodAuthRefresh,
-			authRefreshRPC{AuthRefreshRequest: pluginapi.AuthRefreshRequest{AuthID: id, StorageJSON: []byte(storage)}}).Auth.StorageJSON
-	}
-	first := refresh("first.json", kiroRsSocial)
-	second := refresh("second.json", strings.Replace(kiroRsSocial, "profile/X", "profile/Y", 1))
-	for _, tc := range []struct {
-		storage []byte
-		want    string
-	}{{first, "glm-5"}, {second, "claude-haiku-4.5"}} {
-		resp := callHandler[pluginapi.ModelResponse](t, pluginabi.MethodModelForAuth,
-			authModelRPC{AuthModelRequest: pluginapi.AuthModelRequest{StorageJSON: tc.storage}})
-		if len(resp.Models) != 1 || resp.Models[0].ID != tc.want {
-			t.Errorf("expected only %s, got %v", tc.want, resp.Models)
-		}
-	}
-}
-
-func TestFetchModelCatalogPaginates(t *testing.T) {
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if strings.Contains(r.URL, "nextToken=p2") {
-			return ok(`{"models":[{"modelId":"glm-5"}]}`)
-		}
-		return ok(`{"models":[{"modelId":"auto"}],"nextToken":"p2"}`)
-	})
-	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodSocial, AuthRegion: "us-east-1", AccessToken: "at", RefreshToken: "rt"}, config.Get(), "")
-	if err != nil || len(got) != 2 || got[1].ModelID != "glm-5" || len(*seen) != 2 {
-		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
-	}
-}
-
-func TestFetchModelCatalogResolvesMissingIDCProfile(t *testing.T) {
-	const arn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/REAL"
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if r.Method == http.MethodPost {
-			if r.URL == "https://q.us-east-1.amazonaws.com/" {
-				return ok(`{"profiles":[]}`)
-			}
-			return ok(`{"profiles":[{"arn":"` + arn + `"}]}`)
-		}
-		return ok(`{"models":[{"modelId":"live-model"}]}`)
-	})
-	cfg := config.Get()
-	cfg.ClientVersion = "9.8.7"
-	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodIDC, AccessToken: "at", ProfileArn: builderIDPlaceholderARN}, cfg, "cb-1")
-	if err != nil || len(got) != 1 || got[0].ModelID != "live-model" || len(*seen) != 3 {
-		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
-	}
-	for _, req := range (*seen)[:2] {
-		if req.Method != http.MethodPost || req.Headers["x-amz-target"][0] != "AmazonCodeWhispererService.ListAvailableProfiles" ||
-			req.Headers["Content-Type"][0] != "application/x-amz-json-1.0" || string(req.Body) != `{"maxResults":10}` {
-			t.Fatalf("unexpected profile request: %+v", req)
-		}
-	}
-	list := (*seen)[2]
-	u, err := url.Parse(list.URL)
-	if err != nil || list.Method != http.MethodGet || u.Host != "q.eu-central-1.amazonaws.com" || u.Query().Get("profileArn") != arn {
-		t.Fatalf("unexpected model list request: %+v", list)
-	}
-	ids := map[string]bool{}
-	for _, req := range *seen {
-		for _, name := range []string{"user-agent", "x-amz-user-agent"} {
-			if !strings.Contains(firstNonEmpty(req.Headers[name]...), "KiroIDE-9.8.7-") {
-				t.Errorf("%s %s: %s does not advertise configured client version", req.Method, req.URL, name)
-			}
-		}
-		h := http.Header(req.Headers)
-		id := firstNonEmpty(req.Headers["amz-sdk-invocation-id"]...)
-		if id == "" || ids[id] || firstNonEmpty(req.Headers["amz-sdk-request"]...) != "attempt=1; max=1" ||
-			h.Get("Authorization") != "Bearer at" || req.HostCallbackID != "cb-1" {
-			t.Fatalf("unexpected SDK headers: %+v", req)
-		}
-		ids[id] = true
-	}
-}
-
-func TestFetchModelCatalogBuilderIDFallsBackWithoutProfile(t *testing.T) {
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if r.Method == http.MethodPost {
-			return &hostapi.HTTPResponse{StatusCode: http.StatusForbidden, Body: []byte(`{"message":"AWS Builder ID is not supported"}`)}, nil
-		}
-		return ok(`{"models":[{"modelId":"auto"}]}`)
-	})
-	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodIDC, AccessToken: "at"}, config.Get(), "cb-1")
-	if err != nil || len(got) != 1 || len(*seen) != 2 || (*seen)[1].URL != "https://q.us-east-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR" {
-		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
-	}
-}
-
-func TestFetchModelCatalogRetriesFailedPage(t *testing.T) {
-	pageTwoCalls := 0
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if !strings.Contains(r.URL, "nextToken=p2") {
-			return ok(`{"models":[{"modelId":"auto"}],"nextToken":"p2"}`)
-		}
-		pageTwoCalls++
-		if pageTwoCalls == 1 {
-			return &hostapi.HTTPResponse{StatusCode: http.StatusInternalServerError}, nil
-		}
-		return ok(`{"models":[{"modelId":"glm-5"}]}`)
-	})
-	got, err := fetchModelCatalog(Credential{AccessToken: "at", ProfileArn: "arn:test"}, config.Get(), "cb-1")
-	if err != nil || len(got) != 2 || got[0].ModelID != "auto" || got[1].ModelID != "glm-5" {
-		t.Fatalf("models=%v err=%v", got, err)
-	}
-	if len(*seen) != 3 || !reflect.DeepEqual((*seen)[1], (*seen)[2]) {
-		t.Fatalf("expected only the second page to be retried, got %d requests", len(*seen))
-	}
-}
-
-func TestFetchModelCatalogSharesRetryBudgetAcrossPages(t *testing.T) {
-	calls := 0
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		calls++
-		if calls == 2 {
-			return ok(`{"models":[{"modelId":"auto"}],"nextToken":"p2"}`)
-		}
-		return &hostapi.HTTPResponse{
-			StatusCode: http.StatusInternalServerError,
-			Headers:    map[string][]string{"X-Amzn-RequestId": {"trace-id"}},
-			Body:       []byte("sensitive body"),
-		}, nil
-	})
-	got, err := fetchModelCatalog(Credential{AccessToken: "at", ProfileArn: "arn:test"}, config.Get(), "cb-1")
-	var up *UpstreamError
-	if len(got) != 0 || len(*seen) != 3 || !errors.As(err, &up) || up.Status != http.StatusInternalServerError {
-		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
-	}
-	if want := `kiro upstream HTTP 500 (region=us-east-1 profile_arn_sent=true request_id="trace-id")`; err.Error() != want {
-		t.Fatalf("diagnostic = %q, want %q", err, want)
-	}
-}
-
-func TestFetchModelCatalogRetriesWithoutProfileARN(t *testing.T) {
-	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		if strings.Contains(r.URL, "profileArn=") {
-			return &hostapi.HTTPResponse{StatusCode: 400, Body: []byte(`{"message":"Invalid profileArn."}`)}, nil
-		}
-		return ok(`{"models":[{"modelId":"auto"}]}`)
-	})
-	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodSocial, AuthRegion: "us-east-1", AccessToken: "at", RefreshToken: "rt", ProfileArn: "arn:broken"}, config.Get(), "")
-	if err != nil || len(got) != 1 || got[0].ModelID != "auto" || len(*seen) != 2 {
-		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
 	}
 }
 

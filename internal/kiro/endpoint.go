@@ -3,7 +3,6 @@ package kiro
 import (
 	"crypto/rand"
 	"fmt"
-	"net/url"
 	"regexp"
 
 	"github.com/AkkunYo/kiro4cpa-plugin/internal/config"
@@ -16,7 +15,7 @@ var regionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
 const (
 	socialPlaceholderARN    = "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"
 	builderIDPlaceholderARN = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX"
-	usageAPIClientVersion   = "1.4.236"
+	usageAPIClientVersion   = "0.9.2"
 )
 
 func effectiveProfileARN(c Credential) string {
@@ -42,7 +41,7 @@ func validateRegion(region string) error {
 }
 
 // streamingProfileARN is the profileArn injected into generateAssistantResponse.
-// Placeholders are only valid there; usage and model calls send the real ARN or none.
+// The Builder ID placeholder is only used there, not for usage requests.
 func streamingProfileARN(c Credential) string {
 	switch {
 	case c.AuthMethod == AuthMethodAPIKey:
@@ -62,24 +61,6 @@ func generateURL(c Credential, cfg config.PluginConfig) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("https://q.%s.amazonaws.com/generateAssistantResponse", region), nil
-}
-
-func listModelsURL(c Credential, nextToken string) string {
-	return listModelsURLWith(c, c.restRegion(), effectiveProfileARN(c), nextToken)
-}
-
-func listModelsURLWith(c Credential, region, profileArn, nextToken string) string {
-	q := url.Values{"origin": {"AI_EDITOR"}}
-	if profileArn != "" {
-		q.Set("profileArn", profileArn)
-	}
-	if nextToken != "" {
-		q.Set("nextToken", nextToken)
-	}
-	if region == "" {
-		region = c.restRegion()
-	}
-	return fmt.Sprintf("https://q.%s.amazonaws.com/ListAvailableModels?%s", region, q.Encode())
 }
 
 func streamHeaders(c Credential, cfg config.PluginConfig) map[string][]string {
@@ -102,16 +83,12 @@ func streamHeaders(c Credential, cfg config.PluginConfig) map[string][]string {
 }
 
 func runtimeHeaders(c Credential, cfg config.PluginConfig) map[string][]string {
-	return runtimeHeadersWithVersion(c, cfg, usageAPIClientVersion)
-}
-
-func runtimeHeadersWithVersion(c Credential, cfg config.PluginConfig, clientVersion string) map[string][]string {
 	mid := machineID(c)
 	h := map[string][]string{
 		"Authorization":    {"Bearer " + c.bearerToken()},
-		"x-amz-user-agent": {fmt.Sprintf("aws-sdk-js/1.0.0 KiroIDE-%s-%s", clientVersion, mid)},
+		"x-amz-user-agent": {fmt.Sprintf("aws-sdk-js/1.0.0 KiroIDE-%s-%s", usageAPIClientVersion, mid)},
 		"user-agent": {fmt.Sprintf("aws-sdk-js/1.0.0 ua/2.1 os/%s lang/js md/nodejs#%s api/codewhispererruntime#1.0.0 m/N,E KiroIDE-%s-%s",
-			cfg.OSVersion, cfg.NodeVersion, clientVersion, mid)},
+			cfg.OSVersion, cfg.NodeVersion, usageAPIClientVersion, mid)},
 	}
 	if t := tokenType(c); t != "" {
 		h["tokentype"] = []string{t}

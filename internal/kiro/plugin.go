@@ -69,9 +69,8 @@ func getRegistration() registration {
 			ModelProvider:  true,
 			AuthProvider:   true,
 			Executor:       true,
-			// Kiro has no credential-free models. Static models would be published
-			// under a credential-less executor client that CPA never filters with
-			// oauth-excluded-models, so only per-auth models are exposed.
+			// Publish bundled model IDs under each auth so CPA still applies
+			// account-specific routing and exclusions.
 			ExecutorModelScope: pluginapi.ExecutorModelScopeOAuth,
 			// CPA translates OpenAI Chat / Responses to and from Claude itself.
 			ExecutorInputFormats:  []string{"claude"},
@@ -178,8 +177,7 @@ type authRefreshRPC struct {
 }
 
 // handleAuthParse runs synchronously while CPA loads auth files, so it never
-// touches the network. A credential without a stored catalogue is scheduled
-// for an immediate refresh, which fetches the catalogue off the startup path.
+// touches the network.
 func handleAuthParse(request []byte) ([]byte, error) {
 	var req pluginapi.AuthParseRequest
 	if err := json.Unmarshal(request, &req); err != nil {
@@ -197,17 +195,12 @@ func handleAuthParse(request []byte) ([]byte, error) {
 		return nil, err
 	}
 	now := time.Now()
-	next := now
+	next := scheduledRefresh(cred, now)
 	disabled, _ := fields["disabled"].(bool)
-	switch _, hasCatalog := catalogFrom(fields); {
-	case hasCatalog:
-		next = scheduledRefresh(cred, now)
-	case disabled:
-		// CPA re-parses the file after every refresh write and, for a disabled
-		// credential, takes this time instead of keeping its own schedule.
-		// "Now" would refresh it again at once, in a loop, for an account
-		// whose catalogue Kiro keeps refusing.
+	if disabled {
 		next = now.Add(longRefreshInterval)
+	} else if cred.AuthMethod != AuthMethodAPIKey && cred.AccessToken == "" {
+		next = now
 	}
 	return wire.OK(pluginapi.AuthParseResponse{
 		Handled: true,
@@ -256,17 +249,7 @@ func handleAuthRefresh(request []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	catalog, errList := fetchModelCatalog(refreshed, cfg, req.HostCallbackID)
-	if errList == nil {
-		if _, hadCatalog := catalogFrom(fields); !hadCatalog {
-			log.Printf("kiro4cpa: fetched live model catalogue for %s (%d models)", req.AuthID, len(catalog))
-		}
-		fields = withCatalog(fields, catalog, now)
-	} else if _, hadCatalog := catalogFrom(fields); hadCatalog {
-		log.Printf("kiro4cpa: listing models for %s failed, keeping stored catalogue: %v", req.AuthID, errList)
-	} else {
-		log.Printf("kiro4cpa: listing models for %s failed, using default catalogue: %v", req.AuthID, errList)
-	}
+	delete(fields, catalogKey)
 	// Older builds treated a catalogue-only 403 as an account suspension.
 	// Clear that warning without changing the user's enable/disable setting.
 	if _, ok := fields[blockedAtKey]; ok {

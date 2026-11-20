@@ -4,12 +4,11 @@
 
 - Commit every change you make. Use Conventional Commit prefixes such as `fix:`, `feat:`, or `chore:`.
 
-## Model Discovery
+## Model Catalog
 
-- Implement account-specific model discovery in the `kiro4cpa` plugin running inside CPA. Success means CPA exposes the models fetched for the plugin's own credential after a refresh.
-- Do not require users to install or run Kiro CLI or Kiro IDE, or copy a model list from either. A working model picker in another client does not verify the plugin.
-- Support Builder ID credentials without `profileArn` through a verified upstream listing method if one is available. Never invent a profile ARN or send a placeholder in a catalog request.
-- Keep the default catalog as a fallback when upstream discovery fails. Showing defaults is not evidence that discovery worked.
+- Use Kiro's published model matrix to maintain the bundled per-plan catalog, including Student. Do not call upstream model discovery during credential refresh.
+- Preserve per-account exclusions and use the Free catalog for unknown plans. A bundled list does not verify access for a particular credential.
+- Do not require Kiro CLI or Kiro IDE, or require a profile ARN for model registration.
 
 ## Local Environment
 

@@ -16,10 +16,10 @@ var idcLogin = Credential{AuthMethod: AuthMethodIDC, AuthRegion: "us-east-1", Ac
 
 func TestResolveAccountIdentityReadsUserInfo(t *testing.T) {
 	seen := stubHTTP(t, func(hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
-		return ok(`{"userInfo":{"email":"a@b.c","userId":"u-1"},"usageBreakdownList":[]}`)
+		return ok(`{"userInfo":{"email":"a@b.c","userId":"u-1"},"subscriptionInfo":{"subscriptionTitle":"KIRO STUDENT"},"usageBreakdownList":[]}`)
 	})
 	got := resolveAccountIdentity(idcLogin, config.Get(), time.Now())
-	if got.Email != "a@b.c" || got.UserID != "u-1" {
+	if got.Email != "a@b.c" || got.UserID != "u-1" || got.SubscriptionTitle != "KIRO STUDENT" {
 		t.Fatalf("identity %+v", got)
 	}
 	r := (*seen)[0]

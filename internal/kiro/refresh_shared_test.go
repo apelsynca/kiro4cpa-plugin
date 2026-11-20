@@ -134,8 +134,8 @@ func TestScheduledRefreshReusesExecutorRefresh(t *testing.T) {
 		case strings.Contains(r.URL, "refreshToken"):
 			refreshCalls++
 			return ok(`{"accessToken":"fresh","refreshToken":"rt-rotated","expiresIn":3600}`)
-		case strings.Contains(r.URL, "ListAvailableModels"):
-			return ok(`{"models":[{"modelId":"auto"}]}`)
+		case !strings.HasSuffix(r.URL, "/generateAssistantResponse"):
+			t.Fatalf("unexpected upstream request: %s %s", r.Method, r.URL)
 		case r.Headers["Authorization"][0] != "Bearer fresh":
 			return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte("The bearer token included in the request is invalid")}, nil
 		}

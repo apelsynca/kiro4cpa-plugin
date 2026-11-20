@@ -2,52 +2,75 @@ package kiro
 
 import (
 	"encoding/json"
-	"reflect"
+	"slices"
 	"sort"
 	"testing"
-	"time"
 
+	"github.com/AkkunYo/kiro4cpa-plugin/internal/hostapi"
 	"github.com/AkkunYo/kiro4cpa-plugin/internal/models"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
-func modelsForAuth(t *testing.T, host pluginapi.HostConfigSummary) []string {
-	t.Helper()
-	catalog := []models.UpstreamModel{{ModelID: "auto"}, {ModelID: "claude-sonnet-4.5"}, {ModelID: "claude-opus-4.8"}, {ModelID: "glm-5"}, {ModelID: "deepseek-3.2"}}
-	storage, _ := mergeCredential(withCatalog(map[string]any{}, catalog, time.Now()), Credential{AuthMethod: AuthMethodSocial, RefreshToken: "rt"})
-	resp := callHandler[pluginapi.ModelResponse](t, pluginabi.MethodModelForAuth,
-		authModelRPC{AuthModelRequest: pluginapi.AuthModelRequest{StorageJSON: storage, Host: host}})
-	ids := make([]string, 0, len(resp.Models))
-	for _, m := range resp.Models {
-		ids = append(ids, m.ID)
+func modelIDs(infos []pluginapi.ModelInfo, omit ...string) []string {
+	ids := make([]string, 0, len(infos))
+	for _, m := range infos {
+		if !slices.Contains(omit, m.ID) {
+			ids = append(ids, m.ID)
+		}
 	}
 	sort.Strings(ids)
 	return ids
 }
 
+const freeModelStorage = `{"subscriptionTitle":"KIRO FREE"}`
+const proModelStorage = `{"subscriptionTitle":"KIRO PRO"}`
+
+func TestModelForAuthUsesStaticCatalog(t *testing.T) {
+	for _, tc := range []struct {
+		name, storage string
+		want          []pluginapi.ModelInfo
+	}{
+		{"default", `{` + legacyCatalogField + `}`, models.GetDefaultModelInfos()},
+		{"free", freeModelStorage, models.GetModelInfosForPlan("KIRO FREE")},
+		{"pro with legacy catalog", `{"subscriptionTitle":"KIRO PRO",` + legacyCatalogField + `}`, models.GetModelInfosForPlan("KIRO PRO")},
+		{"student", `{"subscriptionTitle":"KIRO STUDENT"}`, models.GetModelInfosForPlan("KIRO STUDENT")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubHTTP(t, func(req hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+				t.Fatalf("model registration made an upstream request: %s %s", req.Method, req.URL)
+				return nil, nil
+			})
+			assertAccountModels(t, pluginapi.AuthModelRequest{AuthID: tc.name, StorageJSON: []byte(tc.storage)}, modelIDs(tc.want))
+		})
+	}
+}
+
 func TestAccountExclusionMatchesPanelAlias(t *testing.T) {
 	host := pluginapi.HostConfigSummary{OAuthModelAlias: map[string][]pluginapi.ModelAlias{
-		models.ProviderName: {{Name: "claude-sonnet-4.5", Alias: "claude-sonnet-4-5"}, {Name: "claude-sonnet-5.5", Alias: "claude-sonnet-5-5"}},
+		models.ProviderName: {{Name: "claude-sonnet-4.5", Alias: "claude-sonnet-4-5"}},
 	}}
-	catalog := []models.UpstreamModel{{ModelID: "claude-sonnet-4.5"}, {ModelID: "claude-sonnet-5.5"}}
-	storage, _ := mergeCredential(withCatalog(map[string]any{}, catalog, time.Now()), socialCred)
+	pro := models.GetModelInfosForPlan("KIRO PRO")
+	free := models.GetModelInfosForPlan("KIRO FREE")
+	if !slices.Contains(modelIDs(pro), "claude-sonnet-4.5") || !slices.Contains(modelIDs(free), "claude-sonnet-4.5") {
+		t.Fatal("alias exclusion fixture requires Claude Sonnet 4.5 in both plans")
+	}
+	withoutSonnet := modelIDs(pro, "claude-sonnet-4.5")
 	for _, tc := range []struct {
 		name, rule string
 		want       []string
 	}{
-		{"pro excludes selected alias", "claude-sonnet-4-5", []string{"claude-sonnet-5.5"}},
-		{"pro excludes source", "claude-sonnet-4.5", []string{"claude-sonnet-5.5"}},
-		{"pro excludes alias wildcard", "claude-sonnet-4-*", []string{"claude-sonnet-5.5"}},
-		{"cleared rule restores models", "", []string{"claude-sonnet-4.5", "claude-sonnet-5.5"}},
+		{"pro excludes selected alias", "claude-sonnet-4-5", withoutSonnet},
+		{"pro excludes source", "claude-sonnet-4.5", withoutSonnet},
+		{"pro excludes alias wildcard", "claude-sonnet-4-5*", withoutSonnet},
+		{"cleared rule restores models", "", modelIDs(pro)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req := pluginapi.AuthModelRequest{AuthID: "pro", Host: host, StorageJSON: storage,
+			req := pluginapi.AuthModelRequest{AuthID: "pro", Host: host, StorageJSON: []byte(proModelStorage),
 				Attributes: map[string]string{"excluded_models": tc.rule}}
 			assertAccountModels(t, req, tc.want)
 			// The same provider aliases must not block another account.
-			freeStorage, _ := mergeCredential(withCatalog(map[string]any{}, catalog[:1], time.Now()), socialCred)
-			assertAccountModels(t, pluginapi.AuthModelRequest{AuthID: "free", Host: host, StorageJSON: freeStorage}, []string{"claude-sonnet-4.5"})
+			assertAccountModels(t, pluginapi.AuthModelRequest{AuthID: "free", Host: host, StorageJSON: []byte(freeModelStorage)}, modelIDs(free))
 		})
 	}
 }
@@ -55,13 +78,8 @@ func TestAccountExclusionMatchesPanelAlias(t *testing.T) {
 func assertAccountModels(t *testing.T, req pluginapi.AuthModelRequest, want []string) {
 	t.Helper()
 	before, _ := json.Marshal(req)
-	resp := callHandler[pluginapi.ModelResponse](t, pluginabi.MethodModelForAuth, authModelRPC{AuthModelRequest: req})
-	ids := make([]string, 0, len(resp.Models))
-	for _, info := range resp.Models {
-		ids = append(ids, info.ID)
-	}
-	sort.Strings(ids)
-	if !reflect.DeepEqual(ids, want) {
+	resp := callHandler[pluginapi.ModelResponse](t, pluginabi.MethodModelForAuth, req)
+	if ids := modelIDs(resp.Models); !slices.Equal(ids, want) {
 		t.Fatalf("account %s: models=%v, want %v", req.AuthID, ids, want)
 	}
 	after, _ := json.Marshal(req)
@@ -71,8 +89,7 @@ func assertAccountModels(t *testing.T, req pluginapi.AuthModelRequest, want []st
 }
 
 func TestAccountExclusionsRespectAliasScopeAndOverrides(t *testing.T) {
-	catalog := []models.UpstreamModel{{ModelID: "claude-sonnet-4.5"}, {ModelID: "claude-sonnet-5.5"}, {ModelID: "auto"}}
-	storage, _ := mergeCredential(withCatalog(map[string]any{}, catalog, time.Now()), socialCred)
+	infos := []pluginapi.ModelInfo{{ID: "claude-sonnet-4.5"}, {ID: "claude-sonnet-5.5"}, {ID: "auto"}}
 	host := pluginapi.HostConfigSummary{
 		ExcludedModels: map[string][]string{models.ProviderName: {"auto"}},
 		OAuthModelAlias: map[string][]pluginapi.ModelAlias{
@@ -96,55 +113,38 @@ func TestAccountExclusionsRespectAliasScopeAndOverrides(t *testing.T) {
 		{"all excluded", "*", "", []string{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertAccountModels(t, pluginapi.AuthModelRequest{Host: host, StorageJSON: storage,
-				Attributes: map[string]string{"excluded_models": tc.rule, "model_aliases": tc.ownAliases}}, tc.want)
+			req := pluginapi.AuthModelRequest{Host: host, Attributes: map[string]string{"excluded_models": tc.rule, "model_aliases": tc.ownAliases}}
+			if got := modelIDs(withoutModelExclusions(infos, req)); !slices.Equal(got, tc.want) {
+				t.Fatalf("models=%v, want %v", got, tc.want)
+			}
 		})
 	}
 }
 
-func TestAccountExclusionClearsWithoutReusingStoredSnapshot(t *testing.T) {
+func TestAccountExclusionClearsWithoutReusingStoredExclusion(t *testing.T) {
 	host := pluginapi.HostConfigSummary{OAuthModelAlias: map[string][]pluginapi.ModelAlias{
 		models.ProviderName: {{Name: "claude-sonnet-4.5", Alias: "sonnet-public"}},
 	}}
-	storage, _ := mergeCredential(withCatalog(map[string]any{"excluded_models": []string{"sonnet-public"}},
-		[]models.UpstreamModel{{ModelID: "claude-sonnet-4.5"}}, time.Now()), socialCred)
+	storage := []byte(`{"subscriptionTitle":"KIRO FREE","excluded_models":["sonnet-public"]}`)
+	want := modelIDs(models.GetModelInfosForPlan("KIRO FREE"))
 	// CPA's latest attributes have cleared the rule while storage still carries
 	// an older snapshot. The plugin must not resurrect the removed exclusion.
 	assertAccountModels(t, pluginapi.AuthModelRequest{StorageJSON: storage, Host: host,
-		Attributes: map[string]string{"excluded_models": ""}}, []string{"claude-sonnet-4.5"})
+		Attributes: map[string]string{"excluded_models": ""}}, want)
 	// Alias matching is configuration-driven: after a mapping is changed, the
 	// old alias rule must no longer disable an unrelated model.
 	host.OAuthModelAlias[models.ProviderName][0].Alias = "renamed-sonnet"
 	assertAccountModels(t, pluginapi.AuthModelRequest{StorageJSON: storage, Host: host,
-		Attributes: map[string]string{"excluded_models": "sonnet-public"}}, []string{"claude-sonnet-4.5"})
-}
-
-func TestGlobalExclusionMatchesAlias(t *testing.T) {
-	host := pluginapi.HostConfigSummary{
-		ExcludedModels:  map[string][]string{models.ProviderName: {"sonnet-public"}},
-		OAuthModelAlias: map[string][]pluginapi.ModelAlias{models.ProviderName: {{Name: "claude-sonnet-4.5", Alias: "sonnet-public"}}},
-	}
-	want := []string{"auto", "claude-opus-4.8", "deepseek-3.2", "glm-5"}
-	if got := modelsForAuth(t, host); !reflect.DeepEqual(got, want) {
-		t.Fatalf("global alias exclusion: models=%v, want %v", got, want)
-	}
+		Attributes: map[string]string{"excluded_models": "sonnet-public"}}, want)
 }
 
 func TestModelsForAuthAppliesGlobalExclusions(t *testing.T) {
-	got := modelsForAuth(t, pluginapi.HostConfigSummary{ExcludedModels: map[string][]string{
-		"kiro4cpa": {" Claude-Opus-4.8 ", "auto", "deepseek-*"},
-		"claude":   {"glm-5"},
-	}})
-	want := []string{"claude-sonnet-4.5", "glm-5"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("models %v, want %v", got, want)
+	host := pluginapi.HostConfigSummary{
+		ExcludedModels:  map[string][]string{models.ProviderName: {" SONNET-PUBLIC ", "auto"}, "claude": {"*"}},
+		OAuthModelAlias: map[string][]pluginapi.ModelAlias{models.ProviderName: {{Name: "claude-sonnet-4.5", Alias: "sonnet-public"}}},
 	}
-}
-
-func TestModelsForAuthWithoutGlobalExclusions(t *testing.T) {
-	if got := modelsForAuth(t, pluginapi.HostConfigSummary{}); len(got) != 5 {
-		t.Fatalf("models %v", got)
-	}
+	assertAccountModels(t, pluginapi.AuthModelRequest{StorageJSON: []byte(proModelStorage), Host: host},
+		modelIDs(models.GetModelInfosForPlan("KIRO PRO"), "auto", "claude-sonnet-4.5"))
 }
 
 func TestMatchWildcardMatchesCPA(t *testing.T) {
