@@ -30,14 +30,14 @@ func refreshWith(t *testing.T, storage string, listing func() (*hostapi.HTTPResp
 	return resp, fields
 }
 
-func TestRefreshDisablesAccountKiroRejects(t *testing.T) {
+func TestRefreshKeepsAccountEnabledWhenKiroRejectsListing(t *testing.T) {
 	resp, fields := refreshWith(t, kiroRsSocial, func() (*hostapi.HTTPResponse, error) {
 		return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(blockedBody)}, nil
 	})
-	if !resp.Auth.Disabled || resp.Auth.Metadata["disabled"] != true || resp.Auth.Metadata["note"] != blockedNote {
+	if resp.Auth.Disabled || resp.Auth.Metadata["disabled"] == true || resp.Auth.Metadata["note"] != nil {
 		t.Fatalf("auth %+v", resp.Auth)
 	}
-	if fields["disabled"] != true || fields["note"] != blockedNote || fields[blockedAtKey] == nil {
+	if fields["disabled"] == true || fields["note"] != nil || fields[blockedAtKey] != nil {
 		t.Fatalf("stored fields %v", fields)
 	}
 }
@@ -47,7 +47,7 @@ func TestRefreshKeepsUserNoteWhenBlocking(t *testing.T) {
 	resp, fields := refreshWith(t, storage, func() (*hostapi.HTTPResponse, error) {
 		return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(blockedBody)}, nil
 	})
-	if !resp.Auth.Disabled || fields["note"] != "主力账号" {
+	if resp.Auth.Disabled || fields["note"] != "主力账号" {
 		t.Fatalf("disabled %v note %v", resp.Auth.Disabled, fields["note"])
 	}
 }
@@ -71,12 +71,22 @@ func TestRefreshDoesNotDisableOnOtherFailures(t *testing.T) {
 	}
 }
 
-func TestRefreshClearsBlockedNoteWhenKiroServesAgain(t *testing.T) {
+func TestRefreshClearsLegacyBlockedNoteEvenIfListingFails(t *testing.T) {
 	storage := strings.Replace(kiroRsSocial, `{`, `{"note":"`+blockedNote+`","`+blockedAtKey+`":"2026-10-24T00:00:00Z",`, 1)
 	resp, fields := refreshWith(t, storage, func() (*hostapi.HTTPResponse, error) {
-		return ok(`{"models":[{"modelId":"auto","modelName":"Auto"}]}`)
+		return &hostapi.HTTPResponse{StatusCode: 403, Body: []byte(blockedBody)}, nil
 	})
 	if fields["note"] != "" || fields[blockedAtKey] != nil || resp.Auth.Metadata["note"] != "" {
 		t.Fatalf("note %v blockedAt %v meta %v", fields["note"], fields[blockedAtKey], resp.Auth.Metadata["note"])
+	}
+}
+
+func TestRefreshDoesNotReenableDisabledAccount(t *testing.T) {
+	storage := strings.Replace(kiroRsSocial, `"disabled":false`, `"disabled":true,"note":"`+blockedNote+`","`+blockedAtKey+`":"2026-10-24T00:00:00Z"`, 1)
+	resp, fields := refreshWith(t, storage, func() (*hostapi.HTTPResponse, error) {
+		return ok(`{"models":[{"modelId":"auto"}]}`)
+	})
+	if !resp.Auth.Disabled || fields["disabled"] != true || fields["note"] != "" {
+		t.Fatalf("disabled=%v persisted=%v note=%v", resp.Auth.Disabled, fields["disabled"], fields["note"])
 	}
 }

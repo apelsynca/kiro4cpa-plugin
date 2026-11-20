@@ -258,6 +258,57 @@ func TestFetchModelCatalogPaginates(t *testing.T) {
 	}
 }
 
+func TestFetchModelCatalogResolvesMissingIDCProfile(t *testing.T) {
+	const arn = "arn:aws:codewhisperer:eu-central-1:123456789012:profile/REAL"
+	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		if r.Method == http.MethodPost {
+			if r.URL == "https://q.us-east-1.amazonaws.com/" {
+				return ok(`{"profiles":[]}`)
+			}
+			return ok(`{"profiles":[{"arn":"` + arn + `"}]}`)
+		}
+		return ok(`{"models":[{"modelId":"live-model"}]}`)
+	})
+	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodIDC, AccessToken: "at", ProfileArn: builderIDPlaceholderARN}, config.Get(), "cb-1")
+	if err != nil || len(got) != 1 || got[0].ModelID != "live-model" || len(*seen) != 3 {
+		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
+	}
+	for _, req := range (*seen)[:2] {
+		if req.Method != http.MethodPost || req.Headers["x-amz-target"][0] != "AmazonCodeWhispererService.ListAvailableProfiles" ||
+			req.Headers["Content-Type"][0] != "application/x-amz-json-1.0" || string(req.Body) != `{"maxResults":10}` {
+			t.Fatalf("unexpected profile request: %+v", req)
+		}
+	}
+	list := (*seen)[2]
+	u, err := url.Parse(list.URL)
+	if err != nil || list.Method != http.MethodGet || u.Host != "q.eu-central-1.amazonaws.com" || u.Query().Get("profileArn") != arn {
+		t.Fatalf("unexpected model list request: %+v", list)
+	}
+	ids := map[string]bool{}
+	for _, req := range *seen {
+		h := http.Header(req.Headers)
+		id := firstNonEmpty(req.Headers["amz-sdk-invocation-id"]...)
+		if id == "" || ids[id] || firstNonEmpty(req.Headers["amz-sdk-request"]...) != "attempt=1; max=1" ||
+			h.Get("Authorization") != "Bearer at" || req.HostCallbackID != "cb-1" {
+			t.Fatalf("unexpected SDK headers: %+v", req)
+		}
+		ids[id] = true
+	}
+}
+
+func TestFetchModelCatalogBuilderIDFallsBackWithoutProfile(t *testing.T) {
+	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {
+		if r.Method == http.MethodPost {
+			return &hostapi.HTTPResponse{StatusCode: http.StatusForbidden, Body: []byte(`{"message":"AWS Builder ID is not supported"}`)}, nil
+		}
+		return ok(`{"models":[{"modelId":"auto"}]}`)
+	})
+	got, err := fetchModelCatalog(Credential{AuthMethod: AuthMethodIDC, AccessToken: "at"}, config.Get(), "cb-1")
+	if err != nil || len(got) != 1 || len(*seen) != 2 || (*seen)[1].URL != "https://q.us-east-1.amazonaws.com/ListAvailableModels?origin=AI_EDITOR" {
+		t.Fatalf("models=%v err=%v calls=%d", got, err, len(*seen))
+	}
+}
+
 func TestFetchModelCatalogRetriesFailedPage(t *testing.T) {
 	pageTwoCalls := 0
 	seen := stubHTTP(t, func(r hostapi.HTTPRequest) (*hostapi.HTTPResponse, error) {

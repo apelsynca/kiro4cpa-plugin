@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -47,6 +48,15 @@ func handleModelForAuth(request []byte) ([]byte, error) {
 func fetchModelCatalog(c Credential, cfg config.PluginConfig, callbackID string) ([]models.UpstreamModel, error) {
 	headers := runtimeHeaders(c, cfg)
 	regions := restRegionCandidates(c)
+	profileARN := effectiveProfileARN(c)
+	if profileARN == "" && (c.AuthMethod == AuthMethodIDC || c.AuthMethod == AuthMethodExternalIDP) {
+		if arn, region := resolveCatalogProfile(regions, headers, callbackID); arn != "" {
+			profileARN = arn
+			if region != regions[0] {
+				regions[0], regions[1] = regions[1], regions[0]
+			}
+		}
+	}
 
 	type attempt struct {
 		region     string
@@ -54,8 +64,8 @@ func fetchModelCatalog(c Credential, cfg config.PluginConfig, callbackID string)
 	}
 	var attempts []attempt
 	for _, reg := range regions {
-		if arn := effectiveProfileARN(c); arn != "" {
-			attempts = append(attempts, attempt{region: reg, profileArn: arn})
+		if profileARN != "" {
+			attempts = append(attempts, attempt{region: reg, profileArn: profileARN})
 		}
 		attempts = append(attempts, attempt{region: reg, profileArn: ""})
 	}
@@ -83,6 +93,50 @@ func fetchModelCatalog(c Credential, cfg config.PluginConfig, callbackID string)
 	return nil, lastErr
 }
 
+func catalogRequestHeaders(headers map[string][]string) map[string][]string {
+	h := maps.Clone(headers)
+	h["amz-sdk-invocation-id"] = []string{newUUID()}
+	h["amz-sdk-request"] = []string{"attempt=1; max=1"}
+	return h
+}
+
+func resolveCatalogProfile(regions []string, headers map[string][]string, callbackID string) (string, string) {
+	for _, region := range regions {
+		h := catalogRequestHeaders(headers)
+		h["Content-Type"] = []string{"application/x-amz-json-1.0"}
+		h["x-amz-target"] = []string{"AmazonCodeWhispererService.ListAvailableProfiles"}
+		resp, err := hostHTTPDo(hostapi.HTTPRequest{
+			HostCallbackID: callbackID,
+			Method:         http.MethodPost,
+			URL:            fmt.Sprintf("https://q.%s.amazonaws.com/", region),
+			Headers:        h,
+			Body:           []byte(`{"maxResults":10}`),
+		})
+		if err != nil || resp.StatusCode == http.StatusTooManyRequests {
+			break
+		}
+		if resp.StatusCode == http.StatusForbidden && strings.Contains(string(resp.Body), "AWS Builder ID is not supported") {
+			break
+		}
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+		var body struct {
+			Profiles []struct {
+				ARN string `json:"arn"`
+			} `json:"profiles"`
+		}
+		if json.Unmarshal(resp.Body, &body) == nil {
+			for _, profile := range body.Profiles {
+				if arn := strings.TrimSpace(profile.ARN); arn != "" && arn != builderIDPlaceholderARN {
+					return arn, region
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
 func fetchModelCatalogPages(c Credential, region, profileArn string, headers map[string][]string, callbackID string, retry500 *bool) ([]models.UpstreamModel, error) {
 	var all []models.UpstreamModel
 	nextToken := ""
@@ -91,7 +145,7 @@ func fetchModelCatalogPages(c Credential, region, profileArn string, headers map
 			HostCallbackID: callbackID,
 			Method:         http.MethodGet,
 			URL:            listModelsURLWith(c, region, profileArn, nextToken),
-			Headers:        headers,
+			Headers:        catalogRequestHeaders(headers),
 		}
 		resp, err := hostHTTPDo(req)
 		if err == nil && resp.StatusCode == http.StatusInternalServerError && *retry500 {

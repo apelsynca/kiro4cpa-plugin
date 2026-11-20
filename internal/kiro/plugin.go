@@ -257,23 +257,22 @@ func handleAuthRefresh(request []byte) ([]byte, error) {
 	}
 
 	catalog, errList := fetchModelCatalog(refreshed, cfg, req.HostCallbackID)
-	switch {
-	case errList == nil:
-		fields = withCatalog(fields, catalog, now)
-		if blockedNoteSet(fields) {
-			// Kiro serves the account again; the user re-enables it in the panel.
-			delete(fields, blockedAtKey)
-			if note, _ := fields["note"].(string); note == blockedNote {
-				// CPA merges metadata over the file, so clear rather than delete.
-				fields["note"] = ""
-				metadata["note"] = ""
-			}
+	if errList == nil {
+		if _, hadCatalog := catalogFrom(fields); !hadCatalog {
+			log.Printf("kiro4cpa: fetched live model catalogue for %s (%d models)", req.AuthID, len(catalog))
 		}
-	case isAccountBlocked(errList):
-		log.Printf("kiro4cpa: Kiro rejected account %s, disabling it: %v", req.AuthID, errList)
-		fields, metadata = markAccountBlocked(fields, metadata, now)
-	default:
+		fields = withCatalog(fields, catalog, now)
+	} else {
 		log.Printf("kiro4cpa: listing models for %s failed, keeping stored catalogue: %v", req.AuthID, errList)
+	}
+	// Older builds treated a catalogue-only 403 as an account suspension.
+	// Clear that warning without changing the user's enable/disable setting.
+	if _, ok := fields[blockedAtKey]; ok {
+		delete(fields, blockedAtKey)
+		if note, _ := fields["note"].(string); note == blockedNote {
+			fields["note"] = ""
+			metadata["note"] = ""
+		}
 	}
 	storage, err := mergeCredential(fields, refreshed)
 	if err != nil {
@@ -283,7 +282,10 @@ func handleAuthRefresh(request []byte) ([]byte, error) {
 	if floor := now.Add(minRefreshDelay); next.Before(floor) {
 		next = floor
 	}
-	disabled, _ := metadata["disabled"].(bool)
+	disabled, ok := metadata["disabled"].(bool)
+	if !ok {
+		disabled, _ = fields["disabled"].(bool)
+	}
 	return wire.OK(pluginapi.AuthRefreshResponse{
 		Auth: pluginapi.AuthData{
 			Provider: models.ProviderName, ID: req.AuthID, Disabled: disabled,
